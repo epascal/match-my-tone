@@ -4,6 +4,9 @@ node_modules/
 # Fichiers compilés
 dist/
 
+# Packages
+*.zip
+
 # Fichiers de build
 *.log
 *.tsbuildinfo

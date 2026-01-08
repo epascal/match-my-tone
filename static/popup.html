@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Match My Tone</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1 data-i18n="popupTitle">Match My Tone</h1>
+    
+    <div class="control-group">
+      <label>
+        <input type="checkbox" id="enabled">
+        <span data-i18n="popupEnableLabel">Activer le changement de pitch</span>
+      </label>
+    </div>
+    
+    <div class="control-group">
+      <label for="semitones">
+        <span data-i18n="popupSemitonesLabel">Décalage (demi-tons):</span>
+        <span id="semitonesValue">0</span>
+      </label>
+      <input type="range" id="semitones" min="-12" max="12" value="0" step="0.5">
+    </div>
+    
+    <div class="control-group">
+      <label for="hz">
+        <span data-i18n="popupHzLabel">Fréquence de base (Hz):</span>
+        <span id="hzValue">440</span>
+      </label>
+      <input type="range" id="hz" min="400" max="480" value="440" step="1">
+    </div>
+    
+    <div class="info">
+      <p data-i18n="popupInfoText">Fonctionne sur les éléments &lt;audio&gt; et &lt;video&gt; de la page.</p>
+    </div>
+  </div>
+  
+  <script src="popup/popup.js"></script>
+</body>
+</html>

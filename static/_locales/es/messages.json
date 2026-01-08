@@ -1,0 +1,27 @@
+{
+  "extensionName": {
+    "message": "Match My Tone"
+  },
+  "extensionDescription": {
+    "message": "Cambia el tono (pitch) de elementos de audio y vídeo en páginas web en tiempo real."
+  },
+  "browserActionTitle": {
+    "message": "Match My Tone"
+  },
+  "popupTitle": {
+    "message": "Match My Tone"
+  },
+  "popupEnableLabel": {
+    "message": "Activar cambio de tono"
+  },
+  "popupSemitonesLabel": {
+    "message": "Desplazamiento (semitonos):"
+  },
+  "popupHzLabel": {
+    "message": "Frecuencia base (Hz):"
+  },
+  "popupInfoText": {
+    "message": "Funciona en los elementos <audio> y <video> de la página."
+  }
+}
+

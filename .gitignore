@@ -1,0 +1,24 @@
+# Dépendances
+node_modules/
+
+# Fichiers compilés
+dist/
+
+# Fichiers de build
+*.log
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environnement
+.env
+.env.local

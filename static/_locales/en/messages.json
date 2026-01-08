@@ -1,0 +1,27 @@
+{
+  "extensionName": {
+    "message": "Match My Tone"
+  },
+  "extensionDescription": {
+    "message": "Changes the pitch of audio and video elements on web pages in real time."
+  },
+  "browserActionTitle": {
+    "message": "Match My Tone"
+  },
+  "popupTitle": {
+    "message": "Match My Tone"
+  },
+  "popupEnableLabel": {
+    "message": "Enable pitch shifting"
+  },
+  "popupSemitonesLabel": {
+    "message": "Shift (semitones):"
+  },
+  "popupHzLabel": {
+    "message": "Base frequency (Hz):"
+  },
+  "popupInfoText": {
+    "message": "Works on <audio> and <video> elements on the page."
+  }
+}
+

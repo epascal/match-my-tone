@@ -1,0 +1,27 @@
+{
+  "extensionName": {
+    "message": "Match My Tone"
+  },
+  "extensionDescription": {
+    "message": "Modifie la hauteur tonale (pitch) des éléments audio et vidéo sur les pages web en temps réel."
+  },
+  "browserActionTitle": {
+    "message": "Match My Tone"
+  },
+  "popupTitle": {
+    "message": "Match My Tone"
+  },
+  "popupEnableLabel": {
+    "message": "Activer le changement de pitch"
+  },
+  "popupSemitonesLabel": {
+    "message": "Décalage (demi-tons):"
+  },
+  "popupHzLabel": {
+    "message": "Fréquence de base (Hz):"
+  },
+  "popupInfoText": {
+    "message": "Fonctionne sur les éléments <audio> et <video> de la page."
+  }
+}
+

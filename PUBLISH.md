@@ -1,89 +1,89 @@
-# Guide de publication
+# Publishing Guide
 
-## Publication sur GitHub
+## Publishing on GitHub
 
-1. **Créer un dépôt sur GitHub** :
-   - Allez sur https://github.com/new
-   - Créez un nouveau dépôt (par exemple : `match-my-tone`)
-   - **Ne cochez pas** "Initialize this repository with a README"
+1. **Create a repository on GitHub**:
+   - Go to https://github.com/new
+   - Create a new repository (e.g.: `match-my-tone`)
+   - **Do not check** "Initialize this repository with a README"
 
-2. **Pousser le code** :
+2. **Push the code**:
    ```bash
-   git remote add origin https://github.com/VOTRE_USERNAME/match-my-tone.git
+   git remote add origin https://github.com/YOUR_USERNAME/match-my-tone.git
    git branch -M main
    git push -u origin main
    ```
 
-3. **Créer une release** :
-   - Allez dans "Releases" > "Create a new release"
-   - Créez un tag (ex: `v1.0.0`)
-   - Le workflow GitHub Actions créera automatiquement le package .zip
+3. **Create a release**:
+   - Go to "Releases" > "Create a new release"
+   - Create a tag (e.g.: `v1.0.0`)
+   - The GitHub Actions workflow will automatically create the .zip package
 
-## Publication sur addons.mozilla.org (AMO)
+## Publishing on addons.mozilla.org (AMO)
 
-### Prérequis
+### Prerequisites
 
-1. Créer un compte développeur sur https://addons.mozilla.org/developers/
-2. Vérifier votre compte (email + téléphone)
+1. Create a developer account on https://addons.mozilla.org/developers/
+2. Verify your account (email + phone)
 
-### Étapes
+### Steps
 
-1. **Préparer le package** :
+1. **Prepare the package**:
    ```bash
    npm run build
    npm run package
    ```
-   Cela crée `match-my-tone-{version}.zip`
+   This creates `match-my-tone-{version}.zip`
 
-2. **Soumettre l'extension** :
-   - Allez sur https://addons.mozilla.org/developers/addon/submit/
-   - Choisissez "Soumettre une nouvelle extension"
-   - Téléversez le fichier `match-my-tone-{version}.zip`
-   - Remplissez les informations :
-     - **Nom** : Match My Tone
-     - **Résumé** : Modifie la hauteur tonale des éléments audio et vidéo sur les pages web
-     - **Description** : (voir ci-dessous)
-     - **Catégorie** : Audio & Video
-     - **Icônes** : Utilisez les fichiers dans `static/icons/`
-     - **Captures d'écran** : (optionnel, mais recommandé)
+2. **Submit the extension**:
+   - Go to https://addons.mozilla.org/developers/addon/submit/
+   - Choose "Submit a New Add-on"
+   - Upload the `match-my-tone-{version}.zip` file
+   - Fill in the information:
+     - **Name**: Match My Tone
+     - **Summary**: Modifies the pitch of audio and video elements on web pages
+     - **Description**: (see below)
+     - **Category**: Audio & Video
+     - **Icons**: Use files in `static/icons/`
+     - **Screenshots**: (optional, but recommended)
 
-3. **Description suggérée** :
+3. **Suggested description**:
    ```
-   Match My Tone est une extension Firefox qui permet de modifier la hauteur tonale (pitch) des éléments audio et vidéo sur les pages web en temps réel.
+   Match My Tone is a Firefox extension that allows you to modify the pitch of audio and video elements on web pages in real time.
 
-   Fonctionnalités :
-   - Modification du pitch en temps réel pour les éléments <audio> et <video>
-   - Contrôle précis via demi-tons (semitones) avec pas de 0.5
-   - Ajustement de la fréquence de base (Hz)
-   - Activation/désactivation instantanée avec crossfade fluide
-   - Compatible avec YouTube, SoundCloud et autres sites web
-   - Support multilingue (Anglais, Français, Espagnol)
-   - Persistance des paramètres par hostname
+   Features:
+   - Real-time pitch modification for <audio> and <video> elements
+   - Precise control via semitones with 0.5 step
+   - Base frequency adjustment (Hz)
+   - Instant enable/disable with smooth crossfade
+   - Compatible with YouTube, SoundCloud and other websites
+   - Multilingual support (English, French, Spanish)
+   - Parameter persistence per hostname
 
-   Utilise la bibliothèque SoundTouch pour un traitement audio de haute qualité.
+   Uses the SoundTouch library for high-quality audio processing.
    ```
 
-4. **Révision** :
-   - Mozilla examinera votre extension (généralement 1-3 jours)
-   - Vous recevrez un email avec le résultat
-   - Si approuvé, l'extension sera disponible sur AMO
+4. **Review**:
+   - Mozilla will review your extension (usually 1-3 days)
+   - You will receive an email with the result
+   - If approved, the extension will be available on AMO
 
-### Mise à jour
+### Updates
 
-Pour publier une mise à jour :
-1. Modifiez la version dans `static/manifest.json`
-2. Rebuild et repackage :
+To publish an update:
+1. Modify the version in `static/manifest.json`
+2. Rebuild and repackage:
    ```bash
    npm run build
    npm run package
    ```
-3. Allez sur votre page développeur AMO
-4. Cliquez sur "Nouvelle version"
-5. Téléversez le nouveau .zip
+3. Go to your AMO developer page
+4. Click "New Version"
+5. Upload the new .zip
 
-### Notes importantes
+### Important Notes
 
-- **Licence** : L'extension utilise SoundTouch sous licence LGPL v2.1
-- **Permissions** : L'extension demande `activeTab` et `storage`
-- **Manifest V2** : Compatible avec Firefox (Manifest V2)
-- **Code source** : Considérez publier le code source sur GitHub pour la transparence
+- **License**: The extension uses SoundTouch under LGPL v2.1 license
+- **Permissions**: The extension requests `activeTab` and `storage`
+- **Manifest V2**: Compatible with Firefox (Manifest V2)
+- **Source code**: Consider publishing the source code on GitHub for transparency

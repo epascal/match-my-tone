@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Script pour créer un package .zip pour la publication sur addons.mozilla.org
- * Crée un fichier match-my-tone-{version}.zip avec le contenu de dist/
+ * Script to create a .zip package for publishing on addons.mozilla.org
+ * Creates a match-my-tone-{version}.zip file with the contents of dist/
  */
 
 import { createWriteStream } from 'fs';
@@ -20,7 +20,7 @@ async function getVersion() {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf-8'));
     return manifest.version || '1.0.0';
   } catch (err) {
-    console.warn('Impossible de lire la version depuis manifest.json, utilisation de 1.0.0');
+    console.warn('Unable to read version from manifest.json, using 1.0.0');
     return '1.0.0';
   }
 }
@@ -30,24 +30,24 @@ async function createPackage() {
   const distDir = join(__dirname, 'dist');
   const zipPath = join(__dirname, `match-my-tone-${version}.zip`);
 
-  // Vérifier que dist/ existe
+  // Check that dist/ exists
   try {
     await stat(distDir);
   } catch (err) {
-    console.error('❌ Le dossier dist/ n\'existe pas. Lancez d\'abord "npm run build"');
+    console.error('❌ The dist/ directory does not exist. Run "npm run build" first');
     process.exit(1);
   }
 
   return new Promise((resolve, reject) => {
     const output = createWriteStream(zipPath);
     const archive = archiver('zip', {
-      zlib: { level: 9 } // Compression maximale
+      zlib: { level: 9 } // Maximum compression
     });
 
     output.on('close', () => {
       const sizeMB = (archive.pointer() / 1024 / 1024).toFixed(2);
-      console.log(`✓ Package créé : ${zipPath}`);
-      console.log(`  Taille : ${sizeMB} MB`);
+      console.log(`✓ Package created: ${zipPath}`);
+      console.log(`  Size: ${sizeMB} MB`);
       resolve();
     });
 
@@ -57,7 +57,7 @@ async function createPackage() {
 
     archive.pipe(output);
 
-    // Ajouter tous les fichiers de dist/ à la racine du zip
+    // Add all files from dist/ to the root of the zip
     archive.directory(distDir, false);
 
     archive.finalize();
@@ -65,6 +65,6 @@ async function createPackage() {
 }
 
 createPackage().catch((err) => {
-  console.error('❌ Erreur lors de la création du package:', err);
+  console.error('❌ Error creating package:', err);
   process.exit(1);
 });

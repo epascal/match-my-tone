@@ -1,41 +1,41 @@
 /**
- * Types pour la gestion audio et les éléments média
+ * Types for audio management and media elements
  */
 
 /**
- * Structure stockant les nœuds audio pour un élément média traité
+ * Structure storing audio nodes for a processed media element
  */
 export interface ProcessedElementData {
-  /** Source média créée depuis l'élément HTML */
+  /** Media source created from HTML element */
   source: MediaElementAudioSourceNode;
-  /** Nœud AudioWorklet pour le traitement SoundTouch */
+  /** AudioWorklet node for SoundTouch processing */
   workletNode: AudioWorkletNode;
-  /** Nœud Gain pour le chemin bypass (signal original) */
+  /** Gain node for bypass path (original signal) */
   bypassGain: GainNode;
-  /** Nœud Gain pour le chemin effet (signal traité) */
+  /** Gain node for effect path (processed signal) */
   effectGain: GainNode;
 }
 
 /**
- * Paramètres audio globaux utilisés par le content script
+ * Global audio parameters used by content script
  */
 export interface GlobalAudioParams {
-  /** Pitch en demi-tons */
+  /** Pitch in semitones */
   pitch: number;
-  /** État activé/désactivé */
+  /** Enabled/disabled state */
   isEnabled: boolean;
 }
 
 /**
- * Configuration des constantes audio
+ * Audio constants configuration
  */
 export interface AudioConfig {
-  /** Nom du worklet processor */
+  /** Worklet processor name */
   workletName: string;
-  /** Chemin vers le fichier processor */
+  /** Path to processor file */
   workletPath: string;
-  /** Temps de fade pour le crossfade en secondes */
+  /** Fade time for crossfade in seconds */
   fadeTimeSeconds: number;
-  /** Fréquence de base en Hz (La4) */
+  /** Base frequency in Hz (A4) */
   baseHz: number;
 }

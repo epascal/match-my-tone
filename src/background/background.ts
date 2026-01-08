@@ -1,27 +1,27 @@
 /**
- * Script background pour gérer les paramètres de Match My Tone
+ * Background script to manage Match My Tone parameters
  * 
- * Ce script gère :
- * - Le stockage des paramètres par onglet
- * - La communication entre le popup et le content script
- * - Le calcul du pitch à partir des paramètres bruts
+ * This script handles:
+ * - Parameter storage per tab
+ * - Communication between popup and content script
+ * - Pitch calculation from raw parameters
  */
 
 import type { RawAudioParams } from '../types/messages';
 
 /**
- * Paramètres par défaut pour un nouvel onglet
+ * Default parameters for a new tab
  */
 const DEFAULT_PARAMS: RawAudioParams = {
-  hz: 440.0,           // Fréquence de base (A4)
-  semitons: 0,         // Décalage en demi-tons
-  isEnabled: false     // État activé/désactivé
+  hz: 440.0,           // Base frequency (A4)
+  semitons: 0,         // Semitone offset
+  isEnabled: false     // Enabled/disabled state
 };
 
 /**
- * Calcul du pitch total (en demi-tons) à partir :
- * - d'un décalage manuel (semitons)
- * - d'une fréquence de base (hz) par rapport à A4 (440Hz)
+ * Calculates total pitch (in semitones) from:
+ * - a manual offset (semitones)
+ * - a base frequency (hz) relative to A4 (440Hz)
  */
 function calculatePitchSemitones(semitons: number, hz: number): number {
   const BASE_HZ = 440.0;
@@ -30,8 +30,8 @@ function calculatePitchSemitones(semitons: number, hz: number): number {
 }
 
 /**
- * Type minimal du sender (on évite les imports runtime de polyfills).
- * On ne s'appuie que sur les champs dont on a besoin.
+ * Minimal sender type (we avoid runtime imports of polyfills).
+ * We only rely on the fields we need.
  */
 type MessageSenderLike = {
   tab?: { id?: number };
@@ -42,7 +42,7 @@ type GetParamsMessage = { type: 'getParams' };
 type UpdateParamsMessage = {
   type: 'updateParams';
   tabId: number;
-  /** hostname (optionnel) fourni par le popup */
+  /** hostname (optional) provided by popup */
   host?: string | null;
   params: RawAudioParams;
 };
@@ -68,18 +68,18 @@ function tryParseHostname(url: string | undefined): string | null {
 }
 
 /**
- * Background “idiomatique TS” (classe, état encapsulé, helpers + commentaires).
- * Objectif : rester 100% compatible MV2 (script classique, sans import/export runtime).
+ * "Idiomatic TS" background (class, encapsulated state, helpers + comments).
+ * Goal: remain 100% compatible with MV2 (classic script, no runtime import/export).
  */
 class PitchShifterBackground {
   /**
-   * Stockage des paramètres par ID d'onglet (Map = O(1))
+   * Parameter storage per tab ID (Map = O(1))
    */
   private readonly tabParams = new Map<number, RawAudioParams>();
 
   /**
-   * Cache (volatile) tabId -> hostname, utile quand le popup envoie seulement tabId.
-   * Note: le background MV2 est non-persistant, donc ce cache peut disparaître.
+   * Cache (volatile) tabId -> hostname, useful when popup only sends tabId.
+   * Note: MV2 background is non-persistent, so this cache may disappear.
    */
   private readonly tabHost = new Map<number, string>();
 
@@ -89,14 +89,14 @@ class PitchShifterBackground {
   }
 
   // ------------------------------------------------------------
-  // Stockage par onglet
+  // Per-tab storage
   // ------------------------------------------------------------
 
   private async getOrInitTabParams(tabId: number, host: string | null): Promise<RawAudioParams> {
     let params = this.tabParams.get(tabId);
     if (!params) {
       params = { ...DEFAULT_PARAMS };
-      // Applique l'état activé/désactivé mémorisé pour ce hostname, si disponible.
+      // Apply stored enabled/disabled state for this hostname, if available.
       if (host) {
         const stored = await this.getStoredEnabledForHost(host);
         if (typeof stored === 'boolean') {
@@ -121,8 +121,8 @@ class PitchShifterBackground {
   }
 
   private updateTabParams(tabId: number, patch: Partial<RawAudioParams>): void {
-    // Ici, tabParams doit déjà exister. Si ce n'est pas le cas (réveil du background),
-    // on initialise sans host (il sera appliqué au prochain getParams).
+    // Here, tabParams should already exist. If not (background wake-up),
+    // we initialize without host (it will be applied on next getParams).
     let params = this.tabParams.get(tabId);
     if (!params) {
       params = { ...DEFAULT_PARAMS };
@@ -130,7 +130,7 @@ class PitchShifterBackground {
     }
     Object.assign(params, patch);
 
-    // Notifie le content script de l'onglet (si présent)
+    // Notify the tab's content script (if present)
     const msg: ParamsUpdateMessage = {
       type: 'paramsUpdate',
       params: {
@@ -139,7 +139,7 @@ class PitchShifterBackground {
       },
     };
 
-    // Si le content script n'est pas encore injecté, sendMessage échoue : on ignore.
+    // If content script is not yet injected, sendMessage fails: we ignore.
     browser.tabs.sendMessage(tabId, msg).catch(() => undefined);
   }
 
@@ -167,7 +167,7 @@ class PitchShifterBackground {
           const host = typeof msg.host === 'string' && msg.host.length > 0 ? msg.host : this.tabHost.get(msg.tabId) ?? null;
           if (host) {
             this.tabHost.set(msg.tabId, host);
-            // Mémorise l'activation (isEnabled) par hostname
+            // Store activation (isEnabled) per hostname
             void this.setStoredEnabledForHost(host, msg.params.isEnabled);
           }
           this.updateTabParams(msg.tabId, msg.params);
@@ -183,7 +183,7 @@ class PitchShifterBackground {
             const tabId = tabs[0]?.id;
             if (typeof tabId !== 'number') return DEFAULT_PARAMS;
 
-            // Si l'URL est accessible (activeTab), on récupère le hostname.
+            // If URL is accessible (activeTab), we retrieve the hostname.
             const host = tryParseHostname((tabs[0] as unknown as { url?: string })?.url);
             if (host) this.tabHost.set(tabId, host);
 
@@ -217,7 +217,7 @@ class PitchShifterBackground {
   }
 
   // ------------------------------------------------------------
-  // Nettoyage (évite fuite mémoire)
+  // Cleanup (prevents memory leaks)
   // ------------------------------------------------------------
 
   private installTabCleanup(): void {
@@ -228,5 +228,5 @@ class PitchShifterBackground {
   }
 }
 
-// Boot
+// Bootstrap
 new PitchShifterBackground().start();

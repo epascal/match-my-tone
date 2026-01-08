@@ -1,15 +1,15 @@
-# Icônes
+# Icons
 
-Les icônes de l'extension sont déjà générées :
+The extension icons are already generated:
 
-- `icon16.png` - 16x16 pixels (barre d'outils)
-- `icon48.png` - 48x48 pixels (gestionnaire d'extensions)
-- `icon96.png` - 96x96 pixels (store Firefox)
-- `icon.svg` - Fichier source SVG
+- `icon16.png` - 16x16 pixels (toolbar)
+- `icon48.png` - 48x48 pixels (extension manager)
+- `icon96.png` - 96x96 pixels (Firefox store)
+- `icon.svg` - SVG source file
 
-L'icône représente un chanteur stylisé avec un microphone et des notes de musique sur fond vert.
+The icon represents a stylized microphone.
 
-Pour régénérer les icônes PNG à partir du SVG :
+To regenerate PNG icons from SVG:
 ```bash
 magick -background none icons/icon.svg -resize 16x16 icons/icon16.png
 magick -background none icons/icon.svg -resize 48x48 icons/icon48.png

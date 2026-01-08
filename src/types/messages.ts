@@ -1,48 +1,48 @@
 /**
- * Types pour la communication entre les différents composants de l'extension
+ * Types for communication between different extension components
  * (background script, content script, popup)
  */
 
 /**
- * Types de messages échangés entre les composants
+ * Message types exchanged between components
  */
 export type MessageType = 
-  | 'getParams'           // Content script demande les paramètres
-  | 'paramsUpdate'         // Background envoie une mise à jour de paramètres
-  | 'updateParams'        // Popup met à jour les paramètres
-  | 'getCurrentTabParams'; // Popup demande les paramètres de l'onglet actuel
+  | 'getParams'           // Content script requests parameters
+  | 'paramsUpdate'         // Background sends a parameter update
+  | 'updateParams'        // Popup updates parameters
+  | 'getCurrentTabParams'; // Popup requests current tab parameters
 
 /**
- * Paramètres audio bruts (avant calcul du pitch)
+ * Raw audio parameters (before pitch calculation)
  */
 export interface RawAudioParams {
-  /** Fréquence de base en Hz (par défaut 440 = La4) */
+  /** Base frequency in Hz (default 440 = A4) */
   hz: number;
-  /** Décalage en demi-tons */
+  /** Semitone offset */
   semitons: number;
-  /** État activé/désactivé */
+  /** Enabled/disabled state */
   isEnabled: boolean;
 }
 
 /**
- * Paramètres audio calculés (après conversion en pitch)
+ * Calculated audio parameters (after pitch conversion)
  */
 export interface CalculatedAudioParams {
-  /** Pitch en demi-tons (inclut le calcul de la fréquence de base) */
+  /** Pitch in semitones (includes base frequency calculation) */
   pitch: number;
-  /** État activé/désactivé */
+  /** Enabled/disabled state */
   isEnabled: boolean;
 }
 
 /**
- * Message de demande de paramètres (content script -> background)
+ * Parameter request message (content script -> background)
  */
 export interface GetParamsMessage {
   type: 'getParams';
 }
 
 /**
- * Message de mise à jour de paramètres (background -> content script)
+ * Parameter update message (background -> content script)
  */
 export interface ParamsUpdateMessage {
   type: 'paramsUpdate';
@@ -50,7 +50,7 @@ export interface ParamsUpdateMessage {
 }
 
 /**
- * Message de mise à jour depuis le popup (popup -> background)
+ * Update message from popup (popup -> background)
  */
 export interface UpdateParamsMessage {
   type: 'updateParams';
@@ -59,21 +59,21 @@ export interface UpdateParamsMessage {
 }
 
 /**
- * Message de demande de paramètres de l'onglet actuel (popup -> background)
+ * Current tab parameter request message (popup -> background)
  */
 export interface GetCurrentTabParamsMessage {
   type: 'getCurrentTabParams';
 }
 
 /**
- * Réponse de succès
+ * Success response
  */
 export interface SuccessResponse {
   success: true;
 }
 
 /**
- * Réponse d'erreur
+ * Error response
  */
 export interface ErrorResponse {
   success: false;
@@ -81,7 +81,7 @@ export interface ErrorResponse {
 }
 
 /**
- * Union de tous les types de messages
+ * Union of all message types
  */
 export type Message = 
   | GetParamsMessage
@@ -90,7 +90,7 @@ export type Message =
   | GetCurrentTabParamsMessage;
 
 /**
- * Union de toutes les réponses
+ * Union of all responses
  */
 export type MessageResponse = 
   | RawAudioParams

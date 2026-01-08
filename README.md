@@ -1,129 +1,129 @@
-# Match My Tone - Extension Firefox
+# Match My Tone - Firefox Extension
 
-Extension Firefox pour modifier la hauteur tonale (pitch) des éléments audio et vidéo sur les pages web en temps réel.
+Firefox extension to modify the pitch of audio and video elements on web pages in real time.
 
-## Fonctionnalités
+## Features
 
-- Modification du pitch en temps réel pour les éléments `<audio>` et `<video>`
-- Contrôle précis via demi-tons (semitones)
-- Ajustement de la fréquence de base (Hz)
-- Activation/désactivation instantanée avec crossfade fluide
-- Compatible avec YouTube, SoundCloud et autres sites web
+- Real-time pitch modification for `<audio>` and `<video>` elements
+- Precise control via semitones
+- Base frequency adjustment (Hz)
+- Instant enable/disable with smooth crossfade
+- Compatible with YouTube, SoundCloud and other websites
 
-## Prérequis
+## Prerequisites
 
-- Node.js 18+ et npm
-- Firefox (pour tester l'extension)
+- Node.js 18+ and npm
+- Firefox (to test the extension)
 
-## Installation et Build
+## Installation and Build
 
-1. **Installer les dépendances** :
+1. **Install dependencies**:
    ```bash
    npm install
    ```
 
-2. **Compiler le projet** :
+2. **Build the project**:
    ```bash
    npm run build
    ```
    
-   Cela compile les fichiers TypeScript dans `dist/` et copie les fichiers statiques.
+   This compiles TypeScript files into `dist/` and copies static files.
 
-3. **Mode développement (watch)** :
+3. **Development mode (watch)**:
    ```bash
    npm run watch
    ```
    
-   Recompile automatiquement lors des modifications.
+   Automatically recompiles on changes.
 
-4. **Charger l'extension dans Firefox** :
-   - Ouvrez Firefox
-   - Allez dans `about:debugging`
-   - Cliquez sur "Ce Firefox" dans le menu de gauche
-   - Cliquez sur "Charger un module complémentaire temporaire"
-   - Sélectionnez le fichier `dist/manifest.json`
+4. **Load the extension in Firefox**:
+   - Open Firefox
+   - Go to `about:debugging`
+   - Click "This Firefox" in the left menu
+   - Click "Load Temporary Add-on"
+   - Select the `dist/manifest.json` file
 
-## Utilisation
+## Usage
 
-1. Cliquez sur l'icône de l'extension dans la barre d'outils
-2. Activez le changement de pitch avec la case à cocher
-3. Ajustez le décalage en demi-tons avec le curseur (-12 à +12)
-4. Ajustez la fréquence de base si nécessaire (400-480 Hz, par défaut 440 Hz = La4)
+1. Click on the extension icon in the toolbar
+2. Enable pitch shifting with the checkbox
+3. Adjust the semitone offset with the slider (-12 to +12)
+4. Adjust the base frequency if needed (400-480 Hz, default 440 Hz = A4)
 
-## Structure du projet
+## Project Structure
 
 ```
 pitchchange/
-├── src/                    # Sources TypeScript
+├── src/                    # TypeScript sources
 │   ├── background/
-│   │   └── background.ts   # Script background avec types
+│   │   └── background.ts   # Background script with types
 │   ├── content/
-│   │   └── content-script.ts # Content script avec types
+│   │   └── content-script.ts # Content script with types
 │   ├── popup/
-│   │   ├── popup.ts        # Logique du popup
-│   │   └── popup.html      # HTML (copié vers static/)
+│   │   ├── popup.ts        # Popup logic
+│   │   └── popup.html      # HTML (copied to static/)
 │   ├── audio/
-│   │   └── processor.ts    # AudioWorklet Processor en TS
+│   │   └── processor.ts    # AudioWorklet Processor in TS
 │   ├── types/
-│   │   ├── messages.ts     # Types pour les messages
-│   │   ├── audio.ts        # Types pour l'audio
-│   │   └── webextension.d.ts # Types Firefox
+│   │   ├── messages.ts     # Types for messages
+│   │   ├── audio.ts        # Types for audio
+│   │   └── webextension.d.ts # Firefox types
 │   └── utils/
-│       └── pitch-calculator.ts # Utilitaires de calcul
-├── static/                  # Fichiers statiques (copiés vers dist/)
-│   ├── manifest.json       # Configuration de l'extension
-│   ├── popup.html          # Interface utilisateur
+│       └── pitch-calculator.ts # Calculation utilities
+├── static/                  # Static files (copied to dist/)
+│   ├── manifest.json       # Extension configuration
+│   ├── popup.html          # User interface
 │   ├── popup.css           # Styles
-│   └── icons/              # Icônes de l'extension
-├── dist/                    # Fichiers compilés (générés)
-├── tsconfig.json           # Configuration TypeScript
-├── package.json            # Dépendances et scripts
-├── build.mjs               # Script de build esbuild
+│   └── icons/              # Extension icons
+├── dist/                    # Compiled files (generated)
+├── tsconfig.json           # TypeScript configuration
+├── package.json            # Dependencies and scripts
+├── build.mjs               # esbuild build script
 └── README.md
 ```
 
-## Comment ça fonctionne
+## How it works
 
-1. **Content Script** : Détecte les éléments audio/vidéo et crée un `AudioContext`
-2. **AudioWorklet** : Charge le processeur SoundTouch (`soundtouch-processor`)
-3. **Traitement** : Crée deux chemins parallèles :
-   - Bypass : signal original
-   - Effet : signal traité par SoundTouch
-4. **Crossfade** : Mélange les deux signaux avec un fade fluide lors de l'activation/désactivation
+1. **Content Script**: Detects audio/video elements and creates an `AudioContext`
+2. **AudioWorklet**: Loads the SoundTouch processor (`soundtouch-processor`)
+3. **Processing**: Creates two parallel paths:
+   - Bypass: original signal
+   - Effect: signal processed by SoundTouch
+4. **Crossfade**: Mixes both signals with smooth fade on enable/disable
 
 ## SoundTouch
 
-Le plugin utilise la bibliothèque [SoundTouch](https://soundtouch.surina.net/) pour le traitement audio en temps réel. SoundTouch permet de modifier le pitch, le tempo et le taux d'échantillonnage sans altérer les autres paramètres audio.
+The plugin uses the [SoundTouch](https://soundtouch.surina.net/) library for real-time audio processing. SoundTouch allows modifying pitch, tempo and sample rate without altering other audio parameters.
 
-## Développement
+## Development
 
-### Scripts disponibles
+### Available scripts
 
-- `npm run build` - Compile le projet en mode production
-- `npm run watch` - Compile en mode watch (recompilation automatique)
-- `npm run clean` - Nettoie le dossier `dist/`
+- `npm run build` - Build the project in production mode
+- `npm run watch` - Build in watch mode (automatic recompilation)
+- `npm run clean` - Clean the `dist/` folder
 
-### Workflow de développement
+### Development workflow
 
-1. Lancez `npm run watch` pour activer le mode watch
-2. Modifiez les fichiers TypeScript dans `src/`
-3. Les fichiers sont automatiquement recompilés dans `dist/`
-4. Dans Firefox (`about:debugging`), cliquez sur "Recharger" à côté de l'extension
+1. Run `npm run watch` to enable watch mode
+2. Modify TypeScript files in `src/`
+3. Files are automatically recompiled into `dist/`
+4. In Firefox (`about:debugging`), click "Reload" next to the extension
 
-### Architecture TypeScript
+### TypeScript Architecture
 
-Le projet utilise TypeScript avec :
-- **Types stricts** : Tous les fichiers avec types explicites
-- **Commentaires JSDoc** : Documentation complète des fonctions
-- **Modularité** : Séparation claire des responsabilités
-- **Build rapide** : esbuild pour compilation ultra-rapide
+The project uses TypeScript with:
+- **Strict types**: All files with explicit types
+- **JSDoc comments**: Complete function documentation
+- **Modularity**: Clear separation of responsibilities
+- **Fast build**: esbuild for ultra-fast compilation
 
 ## Notes
 
-- Les paramètres sont stockés par onglet
-- Le crossfade utilise une transition de 150ms pour éviter les clics audio
-- Compatible avec les pages dynamiques (YouTube, etc.) grâce à un `MutationObserver`
+- Parameters are stored per tab
+- Crossfade uses a 150ms transition to avoid audio clicks
+- Compatible with dynamic pages (YouTube, etc.) thanks to a `MutationObserver`
 
-## Licence
+## License
 
-Ce projet utilise SoundTouch sous licence LGPL v2.1.
+This project uses SoundTouch under LGPL v2.1 license.

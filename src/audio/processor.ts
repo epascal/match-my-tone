@@ -1,11 +1,11 @@
 /**
  * SoundTouch AudioWorklet Processor
  *
- * Objectif : fournir un `registerProcessor('soundtouch-processor', ...)`
- * avec un code TypeScript lisible et idiomatique (classes ES, types, commentaires),
- * sans garder la structure “transpilée”/Babel.
+ * Goal: provide a `registerProcessor('soundtouch-processor', ...)`
+ * with readable and idiomatic TypeScript code (ES classes, types, comments),
+ * without keeping the "transpiled"/Babel structure.
  *
- * L’algorithme est basé sur SoundTouch (LGPL-2.1+).
+ * The algorithm is based on SoundTouch (LGPL-2.1+).
  *
  * Copyright (c) Olli Parviainen
  * Copyright (c) Ryan Berdeen
@@ -28,16 +28,16 @@
  */
 
 // ------------------------------------------------------------
-// Constantes & helpers
+// Constants & helpers
 // ------------------------------------------------------------
 
-/** AudioWorklet = 128 frames par quantum (spéc WebAudio) */
+/** AudioWorklet = 128 frames per quantum (WebAudio spec) */
 const RENDER_QUANTUM_FRAMES = 128;
 
-/** Nos buffers sont en stéréo interleaved: [L0,R0,L1,R1,...] */
+/** Our buffers are stereo interleaved: [L0,R0,L1,R1,...] */
 const CHANNELS = 2;
 
-/** Épsilon pour considérer un flottant “différent” */
+/** Epsilon to consider a float "different" */
 const FLOAT_EPSILON = 1e-10;
 
 function clamp(value: number, min: number, max: number): number {
@@ -49,14 +49,14 @@ function hasSignificantChange(a: number, b: number): boolean {
 }
 
 // ------------------------------------------------------------
-// FIFO buffer (stéréo interleaved)
+// FIFO buffer (stereo interleaved)
 // ------------------------------------------------------------
 
 /**
- * FIFO de frames audio stéréo interleaved.
+ * FIFO of stereo interleaved audio frames.
  *
- * Stockage : `_vector` contient des samples interleaved, et on raisonne
- * en “frames” (1 frame = 2 samples : L + R).
+ * Storage: `_vector` contains interleaved samples, and we reason
+ * in "frames" (1 frame = 2 samples: L + R).
  */
 class FifoSampleBuffer {
   private _vector: Float32Array = new Float32Array(0);
@@ -71,7 +71,7 @@ class FifoSampleBuffer {
     return this._positionFrames;
   }
 
-  /** Index (en samples) du début des données valides */
+  /** Index (in samples) of the start of valid data */
   get startIndex(): number {
     return this._positionFrames * CHANNELS;
   }
@@ -80,7 +80,7 @@ class FifoSampleBuffer {
     return this._frameCount;
   }
 
-  /** Index (en samples) de fin des données valides (exclu) */
+  /** Index (in samples) of the end of valid data (exclusive) */
   get endIndex(): number {
     return (this._positionFrames + this._frameCount) * CHANNELS;
   }
@@ -90,17 +90,17 @@ class FifoSampleBuffer {
     this.rewind();
   }
 
-  /** “Réserve” numFrames frames dans le buffer (après écriture manuelle dans `vector`). */
+  /** "Reserves" numFrames frames in the buffer (after manual write in `vector`). */
   put(numFrames: number): void {
     this._frameCount += numFrames;
   }
 
   /**
-   * Ajoute des samples interleaved au buffer.
+   * Adds interleaved samples to the buffer.
    *
-   * @param samples - samples interleaved
-   * @param positionFrames - offset (en frames) dans `samples`
-   * @param numFrames - nombre de frames à copier
+   * @param samples - interleaved samples
+   * @param positionFrames - offset (in frames) in `samples`
+   * @param numFrames - number of frames to copy
    */
   putSamples(samples: Float32Array, positionFrames = 0, numFrames = -1): void {
     const sourceOffset = positionFrames * CHANNELS;
@@ -116,7 +116,7 @@ class FifoSampleBuffer {
   }
 
   /**
-   * Copie des frames depuis un autre FIFO.
+   * Copies frames from another FIFO.
    */
   putBuffer(buffer: FifoSampleBuffer, positionFrames = 0, numFrames = -1): void {
     const frames = numFrames >= 0 ? numFrames : buffer.frameCount - positionFrames;
@@ -124,7 +124,7 @@ class FifoSampleBuffer {
   }
 
   /**
-   * Consomme des frames.
+   * Consumes frames.
    */
   receive(numFrames: number = this._frameCount): void {
     const frames = clamp(numFrames, 0, this._frameCount);
@@ -133,8 +133,8 @@ class FifoSampleBuffer {
   }
 
   /**
-   * Copie `numFrames` frames dans `output` (interleaved), puis consomme ces frames.
-   * Si moins de frames sont disponibles, la partie manquante n'est pas écrite.
+   * Copies `numFrames` frames into `output` (interleaved), then consumes these frames.
+   * If fewer frames are available, the missing part is not written.
    */
   receiveSamples(output: Float32Array, numFrames: number): void {
     const numSamples = numFrames * CHANNELS;
@@ -144,7 +144,7 @@ class FifoSampleBuffer {
   }
 
   /**
-   * Extrait sans consommer.
+   * Extracts without consuming.
    */
   extract(output: Float32Array, positionFrames = 0, numFrames = 0): void {
     const sourceOffset = this.startIndex + positionFrames * CHANNELS;
@@ -162,7 +162,7 @@ class FifoSampleBuffer {
       return;
     }
 
-    // On a déjà assez de place : on “rewind” si besoin pour libérer de la place en début
+    // We already have enough space: "rewind" if needed to free space at the beginning
     this.rewind();
   }
 
@@ -194,7 +194,7 @@ abstract class AbstractFifoSamplePipe {
 }
 
 /**
- * RateTransposer : change le “rate” via rééchantillonnage linéaire.
+ * RateTransposer: changes the "rate" via linear resampling.
  */
 class RateTransposer extends AbstractFifoSamplePipe {
   private _rate = 1.0;
@@ -216,7 +216,7 @@ class RateTransposer extends AbstractFifoSamplePipe {
     const numFrames = this.inputBuffer.frameCount;
     if (numFrames === 0) return;
 
-    // Approximation du nombre de frames produites
+    // Approximation of the number of frames produced
     this.outputBuffer.ensureAdditionalCapacity(numFrames / this._rate + 1);
 
     const numFramesOutput = this.transpose(numFrames);
@@ -235,7 +235,7 @@ class RateTransposer extends AbstractFifoSamplePipe {
     let used = 0;
     let outFrames = 0;
 
-    // Premier point : interpolation depuis les “prevSample”
+    // First point: interpolation from "prevSample"
     while (this.slopeCount < 1.0) {
       dest[destOffset + CHANNELS * outFrames] =
         (1.0 - this.slopeCount) * this.prevSampleL + this.slopeCount * src[srcOffset];
@@ -248,7 +248,7 @@ class RateTransposer extends AbstractFifoSamplePipe {
     this.slopeCount -= 1.0;
 
     if (numFrames !== 1) {
-      // Interpolation standard entre src[used] et src[used+1]
+      // Standard interpolation between src[used] and src[used+1]
       outer: while (true) {
         while (this.slopeCount > 1.0) {
           this.slopeCount -= 1.0;
@@ -267,7 +267,7 @@ class RateTransposer extends AbstractFifoSamplePipe {
       }
     }
 
-    // Mémorise le dernier sample pour la prochaine interpolation
+    // Store the last sample for the next interpolation
     this.prevSampleL = src[srcOffset + CHANNELS * numFrames - 2];
     this.prevSampleR = src[srcOffset + CHANNELS * numFrames - 1];
 
@@ -275,7 +275,7 @@ class RateTransposer extends AbstractFifoSamplePipe {
   }
 }
 
-// --- Paramétrage Stretch (time-stretch) ---
+// --- Stretch configuration (time-stretch) ---
 const DEFAULT_SEQUENCE_MS = 0; // 0 = auto
 const DEFAULT_SEEKWINDOW_MS = 0; // 0 = auto
 const DEFAULT_OVERLAP_MS = 8;
@@ -374,41 +374,41 @@ class Stretch extends AbstractFifoSamplePipe {
     this.calculateSequenceParameters();
     this.calculateOverlapLength(this.overlapMs);
 
-    // Force recalcul des tailles dépendantes du tempo
+    // Force recalculation of tempo-dependent sizes
     this.tempo = this._tempo;
     this.midBufferInitialized = false;
   }
 
   process(): void {
-    // Première initialisation: remplir midBuffer avec overlapLength frames
+    // First initialization: fill midBuffer with overlapLength frames
     if (!this.midBufferInitialized) {
       if (this.inputBuffer.frameCount < this.overlapLength) return;
       this.inputBuffer.receiveSamples(this.midBuffer, this.overlapLength);
       this.midBufferInitialized = true;
     }
 
-    // Tant qu'on a assez de données en entrée pour une itération
+    // While we have enough input data for one iteration
     while (this.inputBuffer.frameCount >= this.sampleReq) {
       const offset = this.seekBestOverlapPosition();
 
-      // 1) Overlap-add de overlapLength frames
+      // 1) Overlap-add of overlapLength frames
       this.outputBuffer.ensureAdditionalCapacity(this.overlapLength);
       this.overlap(offset);
       this.outputBuffer.put(this.overlapLength);
 
-      // 2) Copie le “milieu” (hors overlap)
+      // 2) Copy the "middle" (without overlap)
       const nonOverlap = this.seekWindowLength - 2 * this.overlapLength;
       if (nonOverlap > 0) {
         this.outputBuffer.putBuffer(this.inputBuffer, offset + this.overlapLength, nonOverlap);
       }
 
-      // 3) Met à jour midBuffer (dernier overlap du window) pour l'itération suivante
+      // 3) Update midBuffer (last overlap of window) for next iteration
       const start =
         this.inputBuffer.startIndex +
         CHANNELS * (offset + this.seekWindowLength - this.overlapLength);
       this.midBuffer.set(this.inputBuffer.vector.subarray(start, start + CHANNELS * this.overlapLength));
 
-      // 4) Avance dans l'entrée selon le tempo
+      // 4) Advance in input according to tempo
       this.skipFract += this.nominalSkip;
       const overlapSkip = Math.floor(this.skipFract);
       this.skipFract -= overlapSkip;
@@ -510,7 +510,7 @@ class Stretch extends AbstractFifoSamplePipe {
     let correlation = 0;
     const calcLengthSamples = CHANNELS * this.overlapLength;
 
-    // i démarre à 2 comme dans l'impl originale (petit skip)
+    // i starts at 2 as in original impl (small skip)
     for (let i = 2; i < calcLengthSamples; i += CHANNELS) {
       const mixIdx = mixingPosition + i;
       correlation += mixing[mixIdx] * compare[i] + mixing[mixIdx + 1] * compare[i + 1];
@@ -520,7 +520,7 @@ class Stretch extends AbstractFifoSamplePipe {
   }
 
   /**
-   * Overlap-add de `overlapLength` frames à partir de `offsetFrames`.
+   * Overlap-add of `overlapLength` frames starting from `offsetFrames`.
    */
   private overlap(offsetFrames: number): void {
     const input = this.inputBuffer.vector;
@@ -677,7 +677,7 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
     const leftOut = output[0];
     const rightOut = output[1] ?? output[0];
 
-    // Si aucune entrée, on sort du silence
+    // If no input, output silence
     if (!input || input.length === 0 || !input[0]) {
       leftOut.fill(0);
       if (rightOut !== leftOut) rightOut.fill(0);
@@ -687,18 +687,18 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
     const leftIn = input[0];
     const rightIn = input[1] ?? input[0];
 
-    // Paramètres
+    // Parameters
     const rate = paramValue(parameters, 'rate', 1.0);
     const tempo = paramValue(parameters, 'tempo', 1.0);
     const pitch = paramValue(parameters, 'pitch', 1.0);
     const pitchSemitones = paramValue(parameters, 'pitchSemitones', 0);
 
-    // Applique au pipeline
+    // Apply to pipeline
     this.pipe.rate = rate;
     this.pipe.tempo = tempo;
     this.pipe.pitch = pitch * Math.pow(2, pitchSemitones / 12);
 
-    // Interleave entrée
+    // Interleave input
     for (let i = 0; i < leftIn.length; i++) {
       this.inputInterleaved[i * 2] = leftIn[i];
       this.inputInterleaved[i * 2 + 1] = rightIn[i];
@@ -708,7 +708,7 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
     this.pipe.inputBuffer.putSamples(this.inputInterleaved, 0, leftIn.length);
     this.pipe.process();
 
-    // Dé-interleave sortie (si pas assez de frames dispo => silence sur le reste)
+    // De-interleave output (if not enough frames available => silence on the rest)
     this.outputInterleaved.fill(0);
     this.pipe.outputBuffer.receiveSamples(this.outputInterleaved, leftOut.length);
 
@@ -716,7 +716,7 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
       const l = this.outputInterleaved[i * 2];
       const r = this.outputInterleaved[i * 2 + 1];
 
-      // Protection NaN
+      // NaN protection
       leftOut[i] = Number.isFinite(l) ? l : 0;
       rightOut[i] = Number.isFinite(r) ? r : 0;
     }

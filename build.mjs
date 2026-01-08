@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Script de build pour l'extension Firefox Match My Tone
- * Utilise esbuild pour compiler TypeScript en JavaScript
+ * Build script for Match My Tone Firefox extension
+ * Uses esbuild to compile TypeScript to JavaScript
  */
 
 import { build, context } from 'esbuild';
@@ -16,7 +16,7 @@ const __dirname = dirname(__filename);
 const isWatch = process.argv.includes('--watch');
 
 /**
- * Copie récursivement les fichiers statiques vers dist/
+ * Recursively copies static files to dist/
  */
 async function copyStaticFiles() {
   const staticDir = join(__dirname, 'static');
@@ -41,15 +41,15 @@ async function copyStaticFiles() {
   try {
     await stat(staticDir);
     await copyRecursive(staticDir, distDir);
-    console.log('✓ Fichiers statiques copiés');
+    console.log('✓ Static files copied');
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
-    console.log('⚠ Dossier static/ non trouvé, ignoré');
+    console.log('⚠ static/ directory not found, ignored');
   }
 }
 
 /**
- * Configuration esbuild pour les différents points d'entrée
+ * esbuild configuration for different entry points
  */
 const buildOptions = {
   entryPoints: [
@@ -58,42 +58,42 @@ const buildOptions = {
     'src/popup/popup.ts',
     'src/audio/processor.ts',
   ],
-  bundle: false, // Pas de bundling pour les extensions Firefox
+  bundle: false, // No bundling for Firefox extensions
   outdir: 'dist',
   format: 'esm',
   target: 'es2020',
   platform: 'browser',
   sourcemap: true,
-  minify: false, // Garder le code lisible pour le debug
+  minify: false, // Keep code readable for debugging
   tsconfig: 'tsconfig.json',
 };
 
 /**
- * Fonction principale de build
+ * Main build function
  */
 async function main() {
-  console.log('🔨 Build de l\'extension Match My Tone...\n');
+  console.log('🔨 Building Match My Tone extension...\n');
   
-  // Copie les fichiers statiques
+  // Copy static files
   await copyStaticFiles();
   
   if (isWatch) {
-    console.log('👀 Mode watch activé\n');
+    console.log('👀 Watch mode enabled\n');
     const ctx = await context(buildOptions);
     await ctx.watch();
-    console.log('✓ Build terminé, en attente de modifications...\n');
+    console.log('✓ Build complete, waiting for changes...\n');
   } else {
     const result = await build(buildOptions);
     if (result.errors.length === 0) {
-      console.log('✓ Build terminé avec succès\n');
+      console.log('✓ Build completed successfully\n');
     } else {
-      console.error('✗ Erreurs de build:', result.errors);
+      console.error('✗ Build errors:', result.errors);
       process.exit(1);
     }
   }
 }
 
 main().catch((err) => {
-  console.error('✗ Erreur lors du build:', err);
+  console.error('✗ Build error:', err);
   process.exit(1);
 });

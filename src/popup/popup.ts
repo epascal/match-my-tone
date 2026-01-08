@@ -1,23 +1,23 @@
 /**
- * Script pour l'interface popup de Match My Tone
+ * Script for Match My Tone popup interface
  * 
- * Gère :
- * - Le chargement des paramètres de l'onglet actuel
- * - La mise à jour des paramètres via l'interface utilisateur
- * - La synchronisation avec le background script
+ * Handles:
+ * - Loading parameters from the current tab
+ * - Updating parameters via the user interface
+ * - Synchronization with the background script
  */
 
 import type { RawAudioParams } from '../types/messages';
 
 /**
- * Petit helper pour garantir qu'un élément DOM existe.
- * On préfère échouer explicitement dans le popup plutôt que d’avoir
- * des erreurs silencieuses.
+ * Small helper to ensure a DOM element exists.
+ * We prefer to fail explicitly in the popup rather than having
+ * silent errors.
  */
 function mustGetElement<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (!el) {
-    throw new Error(`Popup: élément #${id} introuvable`);
+    throw new Error(`Popup: element #${id} not found`);
   }
   return el as T;
 }
@@ -47,8 +47,8 @@ type PopupDom = {
 };
 
 /**
- * Popup “idiomatique TS” (classe + état encapsulé).
- * Objectif : rester compatible MV2 (script classique, sans import/export runtime).
+ * "Idiomatic TS" popup (class + encapsulated state).
+ * Goal: remain compatible with MV2 (classic script, no runtime import/export).
  */
 class PitchShifterPopup {
   private tabId: number | null = null;
@@ -72,8 +72,8 @@ class PitchShifterPopup {
   }
 
   /**
-   * Applique les traductions sur les éléments statiques du popup.
-   * On se base sur des attributs `data-i18n="messageKey"` dans `static/popup.html`.
+   * Applies translations to static popup elements.
+   * Based on `data-i18n="messageKey"` attributes in `static/popup.html`.
    */
   private localizeStaticText(): void {
     const elements = document.querySelectorAll<HTMLElement>('[data-i18n]');
@@ -89,23 +89,23 @@ class PitchShifterPopup {
   }
 
   // ------------------------------------------------------------
-  // Initialisation / lecture-écriture UI
+  // Initialization / UI read-write
   // ------------------------------------------------------------
 
   private installEventListeners(): void {
-    // Activation / désactivation
+    // Enable / disable
     this.dom.enabled.addEventListener('change', () => {
       void this.pushUiParams();
     });
 
-    // Demi-tons
+    // Semitones
     this.dom.semitones.addEventListener('input', () => {
       const value = parseFloat(this.dom.semitones.value);
       this.dom.semitonesValue.textContent = value.toFixed(1);
       void this.pushUiParams();
     });
 
-    // Fréquence
+    // Frequency
     this.dom.hz.addEventListener('input', () => {
       this.dom.hzValue.textContent = this.dom.hz.value;
       void this.pushUiParams();
@@ -129,7 +129,7 @@ class PitchShifterPopup {
   }
 
   // ------------------------------------------------------------
-  // Communication background
+  // Background communication
   // ------------------------------------------------------------
 
   private async resolveActiveTabId(): Promise<number | null> {
@@ -149,23 +149,23 @@ class PitchShifterPopup {
       this.tabId = await this.resolveActiveTabId();
       this.host = await this.resolveActiveTabHost();
       if (this.tabId === null) {
-        console.warn('Popup: aucun onglet actif détecté.');
+        console.warn('Popup: no active tab detected.');
         return;
       }
 
       const params = await browser.runtime.sendMessage({ type: 'getCurrentTabParams' });
       if (!isRawAudioParams(params)) {
-        throw new Error('Popup: réponse getCurrentTabParams invalide');
+        throw new Error('Popup: invalid getCurrentTabParams response');
       }
 
       this.render(params);
     } catch (err) {
-      console.error('Popup: erreur lors du chargement des paramètres.', err);
+      console.error('Popup: error loading parameters.', err);
     }
   }
 
   /**
-   * Envoie les paramètres UI au background pour l'onglet actif.
+   * Sends UI parameters to background for the active tab.
    */
   private async pushUiParams(): Promise<void> {
     try {
@@ -184,7 +184,7 @@ class PitchShifterPopup {
         params: this.readUiParams(),
       });
     } catch (err) {
-      console.error('Popup: erreur lors de la mise à jour des paramètres.', err);
+      console.error('Popup: error updating parameters.', err);
     }
   }
 }
@@ -193,6 +193,6 @@ document.addEventListener('DOMContentLoaded', () => {
   try {
     new PitchShifterPopup().start();
   } catch (err) {
-    console.error('Popup: erreur fatale.', err);
+    console.error('Popup: fatal error.', err);
   }
 });

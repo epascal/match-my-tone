@@ -155,7 +155,11 @@ class FifoSampleBuffer {
   ensureCapacity(numFrames: number): void {
     const minLength = Math.max(0, Math.ceil(numFrames * CHANNELS));
     if (this._vector.length < minLength) {
-      const newVector = new Float32Array(minLength);
+      // Use exponential growth (double size) to reduce reallocations
+      // This is more efficient than exact sizing for frequently growing buffers
+      const currentLength = this._vector.length;
+      const newLength = Math.max(minLength, currentLength === 0 ? 1024 : currentLength * 2);
+      const newVector = new Float32Array(newLength);
       newVector.set(this._vector.subarray(this.startIndex, this.endIndex));
       this._vector = newVector;
       this._positionFrames = 0;
@@ -327,6 +331,12 @@ class Stretch extends AbstractFifoSamplePipe {
   private refMidBuffer: Float32Array = new Float32Array(0);
   private midBufferInitialized = false;
 
+  // Pre-computed windows for performance
+  private correlationWeights: Float32Array = new Float32Array(0);
+  private fadeInWindow: Float32Array = new Float32Array(0);
+  private fadeOutWindow: Float32Array = new Float32Array(0);
+  private windowsDirty = true;
+
   constructor(sampleRate: number) {
     super();
     this.sampleRate = sampleRate;
@@ -336,6 +346,36 @@ class Stretch extends AbstractFifoSamplePipe {
   clear(): void {
     super.clear();
     this.midBufferInitialized = false;
+  }
+
+  /**
+   * Pre-compute correlation weights and fade windows for better performance.
+   * Uses cosine windowing for smoother transitions (reduces wobbliness).
+   */
+  private updatePrecomputedWindows(): void {
+    if (this.overlapLength === 0) return;
+
+    const length = this.overlapLength;
+    this.correlationWeights = new Float32Array(length);
+    this.fadeInWindow = new Float32Array(length);
+    this.fadeOutWindow = new Float32Array(length);
+
+    // Pre-compute correlation weights (parabolic window)
+    for (let i = 0; i < length; i++) {
+      this.correlationWeights[i] = i * (length - i);
+    }
+
+    // Pre-compute fade windows using cosine (smoother than linear)
+    // This reduces amplitude modulation artifacts (wobbliness)
+    const piOverLength = Math.PI / length;
+    for (let i = 0; i < length; i++) {
+      // Cosine fade-in: 0.5 * (1 - cos(π * i / length))
+      this.fadeInWindow[i] = 0.5 * (1 - Math.cos(piOverLength * i));
+      // Cosine fade-out: 0.5 * (1 + cos(π * i / length))
+      this.fadeOutWindow[i] = 0.5 * (1 + Math.cos(piOverLength * i));
+    }
+
+    this.windowsDirty = false;
   }
 
   set tempo(newTempo: number) {
@@ -377,6 +417,11 @@ class Stretch extends AbstractFifoSamplePipe {
     // Force recalculation of tempo-dependent sizes
     this.tempo = this._tempo;
     this.midBufferInitialized = false;
+    
+    // Ensure windows are computed
+    if (this.windowsDirty) {
+      this.updatePrecomputedWindows();
+    }
   }
 
   process(): void {
@@ -421,9 +466,16 @@ class Stretch extends AbstractFifoSamplePipe {
     newOvl = newOvl < 16 ? 16 : newOvl;
     newOvl -= newOvl % 8;
 
+    const oldOverlapLength = this.overlapLength;
     this.overlapLength = Math.floor(newOvl);
-    this.refMidBuffer = new Float32Array(this.overlapLength * CHANNELS);
-    this.midBuffer = new Float32Array(this.overlapLength * CHANNELS);
+    
+    // Reallocate buffers if overlap length changed
+    if (oldOverlapLength !== this.overlapLength) {
+      this.refMidBuffer = new Float32Array(this.overlapLength * CHANNELS);
+      this.midBuffer = new Float32Array(this.overlapLength * CHANNELS);
+      this.windowsDirty = true;
+      this.updatePrecomputedWindows();
+    }
   }
 
   private calculateSequenceParameters(): void {
@@ -451,9 +503,32 @@ class Stretch extends AbstractFifoSamplePipe {
     let bestOffset = 0;
     let bestCorrelation = -Infinity;
 
-    for (let offset = 0; offset < this.seekLength; offset++) {
+    // Use stride to reduce computation for initial search
+    const stride = Math.max(1, Math.floor(this.seekLength / 64));
+    let coarseBestOffset = 0;
+    let coarseBestCorrelation = -Infinity;
+
+    // Coarse search with stride
+    for (let offset = 0; offset < this.seekLength; offset += stride) {
+      const requiredFrames = offset + this.overlapLength;
+      if (requiredFrames > this.inputBuffer.frameCount) break;
+
       const correlation = this.calculateCrossCorrelationStereo(offset, this.refMidBuffer);
-      if (correlation > bestCorrelation) {
+      if (correlation > coarseBestCorrelation && Number.isFinite(correlation)) {
+        coarseBestCorrelation = correlation;
+        coarseBestOffset = offset;
+      }
+    }
+
+    // Fine search around coarse best
+    const searchStart = Math.max(0, coarseBestOffset - stride);
+    const searchEnd = Math.min(this.seekLength, coarseBestOffset + stride + 1);
+    for (let offset = searchStart; offset < searchEnd; offset++) {
+      const requiredFrames = offset + this.overlapLength;
+      if (requiredFrames > this.inputBuffer.frameCount) break;
+
+      const correlation = this.calculateCrossCorrelationStereo(offset, this.refMidBuffer);
+      if (correlation > bestCorrelation && Number.isFinite(correlation)) {
         bestCorrelation = correlation;
         bestOffset = offset;
       }
@@ -473,10 +548,14 @@ class Stretch extends AbstractFifoSamplePipe {
       const offsets = SCAN_OFFSETS[scanPass];
       for (let j = 0; offsets[j] !== 0; j++) {
         const tempOffset = correlationOffset + offsets[j];
-        if (tempOffset >= this.seekLength) break;
+        // Validate bounds: must be positive and within seekLength
+        if (tempOffset < 0 || tempOffset >= this.seekLength) break;
+        // Ensure we have enough data in input buffer for this offset
+        const requiredFrames = tempOffset + this.overlapLength;
+        if (requiredFrames > this.inputBuffer.frameCount) break;
 
         const correlation = this.calculateCrossCorrelationStereo(tempOffset, this.refMidBuffer);
-        if (correlation > bestCorrelation) {
+        if (correlation > bestCorrelation && Number.isFinite(correlation)) {
           bestCorrelation = correlation;
           bestOffset = tempOffset;
         }
@@ -489,10 +568,16 @@ class Stretch extends AbstractFifoSamplePipe {
 
   /**
    * Prépare le buffer de référence pour corrélation (pondération).
+   * Uses pre-computed weights for better performance.
    */
   private preCalculateCorrelationReferenceStereo(): void {
+    if (this.windowsDirty) {
+      this.updatePrecomputedWindows();
+    }
+
+    // Use pre-computed weights instead of recalculating
     for (let i = 0; i < this.overlapLength; i++) {
-      const weight = i * (this.overlapLength - i);
+      const weight = this.correlationWeights[i];
       const idx = CHANNELS * i;
       this.refMidBuffer[idx] = this.midBuffer[idx] * weight;
       this.refMidBuffer[idx + 1] = this.midBuffer[idx + 1] * weight;
@@ -502,18 +587,41 @@ class Stretch extends AbstractFifoSamplePipe {
   /**
    * Corrélation croisée stéréo entre `midBuffer` (référence) et l'entrée
    * à partir de `offsetFrames`.
+   * Optimized for better CPU cache usage and vectorization.
    */
   private calculateCrossCorrelationStereo(offsetFrames: number, compare: Float32Array): number {
     const mixing = this.inputBuffer.vector;
     const mixingPosition = this.inputBuffer.startIndex + CHANNELS * offsetFrames;
+    const overlapLength = this.overlapLength;
 
+    // Cache frequently accessed values
     let correlation = 0;
-    const calcLengthSamples = CHANNELS * this.overlapLength;
-
+    
+    // Process in pairs for better vectorization
     // i starts at 2 as in original impl (small skip)
-    for (let i = 2; i < calcLengthSamples; i += CHANNELS) {
-      const mixIdx = mixingPosition + i;
-      correlation += mixing[mixIdx] * compare[i] + mixing[mixIdx + 1] * compare[i + 1];
+    const startFrame = 1; // Start from frame 1 (sample index 2)
+    const endFrame = overlapLength;
+    
+    // Unroll loop for better performance
+    let i = startFrame;
+    const step = 2; // Process 2 frames at a time
+    
+    // Process pairs
+    for (; i < endFrame - 1; i += step) {
+      const idx0 = CHANNELS * i;
+      const idx1 = CHANNELS * (i + 1);
+      const mixIdx0 = mixingPosition + idx0;
+      const mixIdx1 = mixingPosition + idx1;
+      
+      correlation += mixing[mixIdx0] * compare[idx0] + mixing[mixIdx0 + 1] * compare[idx0 + 1];
+      correlation += mixing[mixIdx1] * compare[idx1] + mixing[mixIdx1 + 1] * compare[idx1 + 1];
+    }
+    
+    // Handle remaining frame if odd number
+    if (i < endFrame) {
+      const idx = CHANNELS * i;
+      const mixIdx = mixingPosition + idx;
+      correlation += mixing[mixIdx] * compare[idx] + mixing[mixIdx + 1] * compare[idx + 1];
     }
 
     return correlation;
@@ -521,19 +629,23 @@ class Stretch extends AbstractFifoSamplePipe {
 
   /**
    * Overlap-add of `overlapLength` frames starting from `offsetFrames`.
+   * Uses pre-computed cosine windows for smoother transitions.
    */
   private overlap(offsetFrames: number): void {
+    if (this.windowsDirty) {
+      this.updatePrecomputedWindows();
+    }
+
     const input = this.inputBuffer.vector;
     const inputPosition = this.inputBuffer.startIndex + CHANNELS * offsetFrames;
 
     const output = this.outputBuffer.vector;
     const outputPosition = this.outputBuffer.endIndex;
 
-    const frameScale = 1 / this.overlapLength;
-
+    // Use pre-computed fade windows (cosine instead of linear)
     for (let i = 0; i < this.overlapLength; i++) {
-      const fadeOut = (this.overlapLength - i) * frameScale;
-      const fadeIn = i * frameScale;
+      const fadeIn = this.fadeInWindow[i];
+      const fadeOut = this.fadeOutWindow[i];
 
       const ctx = CHANNELS * i;
       const inIdx = inputPosition + ctx;
@@ -698,10 +810,26 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
     this.pipe.tempo = tempo;
     this.pipe.pitch = pitch * Math.pow(2, pitchSemitones / 12);
 
-    // Interleave input
-    for (let i = 0; i < leftIn.length; i++) {
-      this.inputInterleaved[i * 2] = leftIn[i];
-      this.inputInterleaved[i * 2 + 1] = rightIn[i];
+    // Interleave input (optimized loop)
+    const length = leftIn.length;
+    const inputInterleaved = this.inputInterleaved;
+    
+    // Process in pairs for better performance
+    let idx = 0;
+    for (; idx < length - 1; idx += 2) {
+      const outIdx0 = idx * 2;
+      const outIdx1 = (idx + 1) * 2;
+      inputInterleaved[outIdx0] = leftIn[idx];
+      inputInterleaved[outIdx0 + 1] = rightIn[idx];
+      inputInterleaved[outIdx1] = leftIn[idx + 1];
+      inputInterleaved[outIdx1 + 1] = rightIn[idx + 1];
+    }
+    
+    // Handle remaining sample if odd length
+    if (idx < length) {
+      const outIdx = idx * 2;
+      inputInterleaved[outIdx] = leftIn[idx];
+      inputInterleaved[outIdx + 1] = rightIn[idx];
     }
 
     // Process
@@ -712,13 +840,35 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
     this.outputInterleaved.fill(0);
     this.pipe.outputBuffer.receiveSamples(this.outputInterleaved, leftOut.length);
 
-    for (let i = 0; i < leftOut.length; i++) {
-      const l = this.outputInterleaved[i * 2];
-      const r = this.outputInterleaved[i * 2 + 1];
-
+    // Optimized de-interleaving with NaN protection
+    const outputLength = leftOut.length;
+    const outputInterleaved = this.outputInterleaved;
+    
+    // Process in pairs for better performance
+    let outIdx = 0;
+    for (; outIdx < outputLength - 1; outIdx += 2) {
+      const inIdx0 = outIdx * 2;
+      const inIdx1 = (outIdx + 1) * 2;
+      
+      const l0 = outputInterleaved[inIdx0];
+      const r0 = outputInterleaved[inIdx0 + 1];
+      const l1 = outputInterleaved[inIdx1];
+      const r1 = outputInterleaved[inIdx1 + 1];
+      
       // NaN protection
-      leftOut[i] = Number.isFinite(l) ? l : 0;
-      rightOut[i] = Number.isFinite(r) ? r : 0;
+      leftOut[outIdx] = Number.isFinite(l0) ? l0 : 0;
+      rightOut[outIdx] = Number.isFinite(r0) ? r0 : 0;
+      leftOut[outIdx + 1] = Number.isFinite(l1) ? l1 : 0;
+      rightOut[outIdx + 1] = Number.isFinite(r1) ? r1 : 0;
+    }
+    
+    // Handle remaining sample if odd length
+    if (outIdx < outputLength) {
+      const inIdx = outIdx * 2;
+      const l = outputInterleaved[inIdx];
+      const r = outputInterleaved[inIdx + 1];
+      leftOut[outIdx] = Number.isFinite(l) ? l : 0;
+      rightOut[outIdx] = Number.isFinite(r) ? r : 0;
     }
 
     return true;

@@ -51,10 +51,10 @@ type ParamsUpdateMessage = { type: 'paramsUpdate'; params: { pitch: number; isEn
 
 type IncomingMessage = GetParamsMessage | UpdateParamsMessage | GetCurrentTabParamsMessage;
 
-const HOST_ENABLED_PREFIX = 'hostEnabled:';
+const HOST_PARAMS_PREFIX = 'hostParams:';
 
 function storageKeyForHost(host: string): string {
-  return `${HOST_ENABLED_PREFIX}${host}`;
+  return `${HOST_PARAMS_PREFIX}${host}`;
 }
 
 function tryParseHostname(url: string | undefined): string | null {
@@ -96,11 +96,12 @@ class PitchShifterBackground {
     let params = this.tabParams.get(tabId);
     if (!params) {
       params = { ...DEFAULT_PARAMS };
-      // Apply stored enabled/disabled state for this hostname, if available.
+      // Apply stored parameters for this hostname, if available.
       if (host) {
-        const stored = await this.getStoredEnabledForHost(host);
-        if (typeof stored === 'boolean') {
-          params.isEnabled = stored;
+        const stored = await this.getStoredParamsForHost(host);
+        if (stored) {
+          // Merge stored params with defaults (in case structure changed)
+          params = { ...DEFAULT_PARAMS, ...stored };
         }
       }
       this.tabParams.set(tabId, params);
@@ -108,16 +109,38 @@ class PitchShifterBackground {
     return params;
   }
 
-  private async getStoredEnabledForHost(host: string): Promise<boolean | null> {
+  private async getStoredParamsForHost(host: string): Promise<Partial<RawAudioParams> | null> {
     const key = storageKeyForHost(host);
     const result = await browser.storage.local.get(key);
     const value = (result as Record<string, unknown>)[key];
-    return typeof value === 'boolean' ? value : null;
+    if (!value || typeof value !== 'object') return null;
+    
+    const stored = value as Partial<RawAudioParams>;
+    // Validate stored values
+    const params: Partial<RawAudioParams> = {};
+    if (typeof stored.isEnabled === 'boolean') {
+      params.isEnabled = stored.isEnabled;
+    }
+    if (typeof stored.semitons === 'number' && Number.isFinite(stored.semitons)) {
+      params.semitons = stored.semitons;
+    }
+    if (typeof stored.hz === 'number' && Number.isFinite(stored.hz) && stored.hz > 0) {
+      params.hz = stored.hz;
+    }
+    
+    return Object.keys(params).length > 0 ? params : null;
   }
 
-  private async setStoredEnabledForHost(host: string, enabled: boolean): Promise<void> {
+  private async setStoredParamsForHost(host: string, params: RawAudioParams): Promise<void> {
     const key = storageKeyForHost(host);
-    await browser.storage.local.set({ [key]: enabled });
+    // Store all parameters: isEnabled, semitones, and hz
+    await browser.storage.local.set({
+      [key]: {
+        isEnabled: params.isEnabled,
+        semitons: params.semitons,
+        hz: params.hz,
+      },
+    });
   }
 
   private updateTabParams(tabId: number, patch: Partial<RawAudioParams>): void {
@@ -167,8 +190,8 @@ class PitchShifterBackground {
           const host = typeof msg.host === 'string' && msg.host.length > 0 ? msg.host : this.tabHost.get(msg.tabId) ?? null;
           if (host) {
             this.tabHost.set(msg.tabId, host);
-            // Store activation (isEnabled) per hostname
-            void this.setStoredEnabledForHost(host, msg.params.isEnabled);
+            // Store all parameters (isEnabled, semitones, hz) per hostname
+            void this.setStoredParamsForHost(host, msg.params);
           }
           this.updateTabParams(msg.tabId, msg.params);
           return Promise.resolve({ success: true as const });

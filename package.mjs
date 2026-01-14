@@ -25,19 +25,7 @@ async function getVersion() {
   }
 }
 
-async function createPackage() {
-  const version = await getVersion();
-  const distDir = join(__dirname, 'dist');
-  const zipPath = join(__dirname, `match-my-tone-${version}.zip`);
-
-  // Check that dist/ exists
-  try {
-    await stat(distDir);
-  } catch (err) {
-    console.error('❌ The dist/ directory does not exist. Run "npm run build" first');
-    process.exit(1);
-  }
-
+async function createZip(sourceDir, zipPath, description) {
   return new Promise((resolve, reject) => {
     const output = createWriteStream(zipPath);
     const archive = archiver('zip', {
@@ -46,7 +34,7 @@ async function createPackage() {
 
     output.on('close', () => {
       const sizeMB = (archive.pointer() / 1024 / 1024).toFixed(2);
-      console.log(`✓ Package created: ${zipPath}`);
+      console.log(`✓ ${description} created: ${zipPath}`);
       console.log(`  Size: ${sizeMB} MB`);
       resolve();
     });
@@ -57,11 +45,39 @@ async function createPackage() {
 
     archive.pipe(output);
 
-    // Add all files from dist/ to the root of the zip
-    archive.directory(distDir, false);
+    // Add all files from sourceDir to the root of the zip
+    archive.directory(sourceDir, false);
 
     archive.finalize();
   });
+}
+
+async function createPackage() {
+  const version = await getVersion();
+  const distDir = join(__dirname, 'dist');
+  const srcDir = join(__dirname, 'src');
+  const distZipPath = join(__dirname, `match-my-tone-${version}.zip`);
+  const srcZipPath = join(__dirname, `match-my-tone-src-${version}.zip`);
+
+  // Check that dist/ exists
+  try {
+    await stat(distDir);
+  } catch (err) {
+    console.error('❌ The dist/ directory does not exist. Run "npm run build" first');
+    process.exit(1);
+  }
+
+  // Check that src/ exists
+  try {
+    await stat(srcDir);
+  } catch (err) {
+    console.error('❌ The src/ directory does not exist.');
+    process.exit(1);
+  }
+
+  // Create both zip files
+  await createZip(distDir, distZipPath, 'Package');
+  await createZip(srcDir, srcZipPath, 'Source package');
 }
 
 createPackage().catch((err) => {

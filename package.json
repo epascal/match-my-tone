@@ -1,6 +1,6 @@
 {
   "name": "match-my-tone",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Extension Firefox pour modifier la hauteur tonale (pitch) des éléments audio et vidéo",
   "type": "module",
   "scripts": {

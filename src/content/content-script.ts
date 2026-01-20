@@ -91,13 +91,9 @@ class PitchShifterContentScript {
 
     this.audioContext = new maybeCtor();
 
-    if (this.audioContext.state === 'suspended') {
-      try {
-        await this.audioContext.resume();
-      } catch {
-        /* ignore; will resume on user gesture */
-      }
-    }
+    // Don't try to resume manually - Firefox will resume automatically when audio plays
+    // Attempting to resume here can cause CSP warnings on some machines
+    // The AudioContext will be automatically resumed when the media element starts playing
 
     if (!this.workletLoaded) {
       const url = browser.runtime.getURL(WORKLET_PATH);

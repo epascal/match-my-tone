@@ -1,9 +1,8 @@
 /**
- * SoundTouch AudioWorklet Processor
+ * SoundTouch WASM AudioWorklet Processor
  *
- * Goal: provide a `registerProcessor('soundtouch-processor', ...)`
- * with readable and idiomatic TypeScript code (ES classes, types, comments),
- * without keeping the "transpiled"/Babel structure.
+ * Pitch shifting via a Rust/WASM SoundTouch implementation.
+ * The WASM binary is received from the content script via port.postMessage.
  *
  * The algorithm is based on SoundTouch (LGPL-2.1+).
  *
@@ -27,739 +26,269 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-// ------------------------------------------------------------
-// Constants & helpers
-// ------------------------------------------------------------
-
-/** AudioWorklet = 128 frames per quantum (WebAudio spec) */
 const RENDER_QUANTUM_FRAMES = 128;
-
-/** Our buffers are stereo interleaved: [L0,R0,L1,R1,...] */
 const CHANNELS = 2;
 
-/** Epsilon to consider a float "different" */
-const FLOAT_EPSILON = 1e-10;
+// Maximum drain chunk: how many frames we request from WASM per receive call.
+const DRAIN_CHUNK = 2048;
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function hasSignificantChange(a: number, b: number): boolean {
-  return Math.abs(a - b) > FLOAT_EPSILON;
-}
+// Fade-in length (in frames) applied once when audio first arrives,
+// to prevent a click at the silence→signal transition.
+const FADE_IN_FRAMES = 64;
 
 // ------------------------------------------------------------
-// FIFO buffer (stereo interleaved)
+// WASM wrapper
 // ------------------------------------------------------------
 
-/**
- * FIFO of stereo interleaved audio frames.
- *
- * Storage: `_vector` contains interleaved samples, and we reason
- * in "frames" (1 frame = 2 samples: L + R).
- */
-class FifoSampleBuffer {
-  private _vector: Float32Array = new Float32Array(0);
-  private _positionFrames = 0;
-  private _frameCount = 0;
+interface WasmExports {
+  memory: WebAssembly.Memory;
+  wasm_alloc(size: number): number;
+  wasm_dealloc(ptr: number, size: number): number;
+  soundtouch_new(sampleRate: number): number;
+  soundtouch_free(ptr: number): void;
+  soundtouch_set_rate(ptr: number, rate: number): void;
+  soundtouch_set_tempo(ptr: number, tempo: number): void;
+  soundtouch_set_pitch(ptr: number, pitch: number): void;
+  soundtouch_put_samples(ptr: number, inputPtr: number, numFrames: number): void;
+  soundtouch_process(ptr: number): void;
+  soundtouch_receive_samples(ptr: number, outputPtr: number, maxFrames: number): number;
+  soundtouch_clear(ptr: number): void;
+}
 
-  get vector(): Float32Array {
-    return this._vector;
+class WasmSoundTouch {
+  private exports: WasmExports | null = null;
+  private handle = 0;
+  private inputPtr = 0;
+  private outputPtr = 0;
+  private inputFrames = 0;
+  private outputFrames = 0;
+
+  // JS-side output FIFO: interleaved stereo samples.
+  // This smooths out the bursty output from the phase vocoder pipeline.
+  private fifo = new Float32Array(0);
+  private fifoWrite = 0;
+  private fifoRead = 0;
+  private audioStarted = false;
+  private fadeInPos = 0;
+
+  get ready(): boolean {
+    return this.exports !== null && this.handle !== 0;
   }
 
-  get positionFrames(): number {
-    return this._positionFrames;
+  private get fifoAvailable(): number {
+    return this.fifoWrite - this.fifoRead;
   }
 
-  /** Index (in samples) of the start of valid data */
-  get startIndex(): number {
-    return this._positionFrames * CHANNELS;
+  init(wasmBytes: ArrayBuffer, sr: number): boolean {
+    try {
+      const module = new WebAssembly.Module(wasmBytes);
+      const instance = new WebAssembly.Instance(module);
+      this.exports = instance.exports as unknown as WasmExports;
+      this.handle = this.exports.soundtouch_new(sr);
+
+      this.allocInput(RENDER_QUANTUM_FRAMES);
+      this.allocOutput(DRAIN_CHUNK);
+
+      // Pre-allocate FIFO for ~0.5s of stereo audio
+      this.fifo = new Float32Array(sr * CHANNELS);
+      this.fifoRead = 0;
+      this.fifoWrite = 0;
+      this.audioStarted = false;
+      this.fadeInPos = 0;
+
+      return true;
+    } catch {
+      this.exports = null;
+      this.handle = 0;
+      return false;
+    }
   }
 
-  get frameCount(): number {
-    return this._frameCount;
+  private allocInput(frames: number): void {
+    if (!this.exports || this.inputFrames >= frames) return;
+    if (this.inputPtr) {
+      this.exports.wasm_dealloc(this.inputPtr, this.inputFrames * CHANNELS * 4);
+    }
+    this.inputPtr = this.exports.wasm_alloc(frames * CHANNELS * 4);
+    this.inputFrames = frames;
   }
 
-  /** Index (in samples) of the end of valid data (exclusive) */
-  get endIndex(): number {
-    return (this._positionFrames + this._frameCount) * CHANNELS;
+  private allocOutput(frames: number): void {
+    if (!this.exports || this.outputFrames >= frames) return;
+    if (this.outputPtr) {
+      this.exports.wasm_dealloc(this.outputPtr, this.outputFrames * CHANNELS * 4);
+    }
+    this.outputPtr = this.exports.wasm_alloc(frames * CHANNELS * 4);
+    this.outputFrames = frames;
   }
 
-  clear(): void {
-    this.receive(this._frameCount);
-    this.rewind();
+  setRate(rate: number): void {
+    this.exports!.soundtouch_set_rate(this.handle, rate);
   }
 
-  /** "Reserves" numFrames frames in the buffer (after manual write in `vector`). */
-  put(numFrames: number): void {
-    this._frameCount += numFrames;
+  setTempo(tempo: number): void {
+    this.exports!.soundtouch_set_tempo(this.handle, tempo);
   }
 
-  /**
-   * Adds interleaved samples to the buffer.
-   *
-   * @param samples - interleaved samples
-   * @param positionFrames - offset (in frames) in `samples`
-   * @param numFrames - number of frames to copy
-   */
-  putSamples(samples: Float32Array, positionFrames = 0, numFrames = -1): void {
-    const sourceOffset = positionFrames * CHANNELS;
-    const frames =
-      numFrames >= 0 ? numFrames : Math.floor((samples.length - sourceOffset) / CHANNELS);
-    const numSamples = frames * CHANNELS;
-
-    this.ensureCapacity(this._frameCount + frames);
-
-    const destOffset = this.endIndex;
-    this._vector.set(samples.subarray(sourceOffset, sourceOffset + numSamples), destOffset);
-    this._frameCount += frames;
+  setPitch(pitch: number): void {
+    this.exports!.soundtouch_set_pitch(this.handle, pitch);
   }
 
-  /**
-   * Copies frames from another FIFO.
-   */
-  putBuffer(buffer: FifoSampleBuffer, positionFrames = 0, numFrames = -1): void {
-    const frames = numFrames >= 0 ? numFrames : buffer.frameCount - positionFrames;
-    this.putSamples(buffer.vector, buffer.positionFrames + positionFrames, frames);
-  }
+  processQuantum(
+    leftIn: Float32Array,
+    rightIn: Float32Array,
+    leftOut: Float32Array,
+    rightOut: Float32Array,
+  ): void {
+    const numFrames = leftIn.length;
+    this.allocInput(numFrames);
 
-  /**
-   * Consumes frames.
-   */
-  receive(numFrames: number = this._frameCount): void {
-    const frames = clamp(numFrames, 0, this._frameCount);
-    this._frameCount -= frames;
-    this._positionFrames += frames;
-  }
-
-  /**
-   * Copies `numFrames` frames into `output` (interleaved), then consumes these frames.
-   * If fewer frames are available, the missing part is not written.
-   */
-  receiveSamples(output: Float32Array, numFrames: number): void {
-    const numSamples = numFrames * CHANNELS;
-    const sourceOffset = this.startIndex;
-    output.set(this._vector.subarray(sourceOffset, sourceOffset + numSamples));
-    this.receive(numFrames);
-  }
-
-  /**
-   * Extracts without consuming.
-   */
-  extract(output: Float32Array, positionFrames = 0, numFrames = 0): void {
-    const sourceOffset = this.startIndex + positionFrames * CHANNELS;
-    const numSamples = numFrames * CHANNELS;
-    output.set(this._vector.subarray(sourceOffset, sourceOffset + numSamples));
-  }
-
-  ensureCapacity(numFrames: number): void {
-    const minLength = Math.max(0, Math.ceil(numFrames * CHANNELS));
-    if (this._vector.length < minLength) {
-      // Use exponential growth (double size) to reduce reallocations
-      // This is more efficient than exact sizing for frequently growing buffers
-      const currentLength = this._vector.length;
-      const newLength = Math.max(minLength, currentLength === 0 ? 1024 : currentLength * 2);
-      const newVector = new Float32Array(newLength);
-      newVector.set(this._vector.subarray(this.startIndex, this.endIndex));
-      this._vector = newVector;
-      this._positionFrames = 0;
-      return;
+    // 1. Write interleaved input into WASM memory
+    const mem = new Float32Array(this.exports!.memory.buffer);
+    const inOff = this.inputPtr >> 2;
+    for (let i = 0; i < numFrames; i++) {
+      mem[inOff + i * 2] = leftIn[i];
+      mem[inOff + i * 2 + 1] = rightIn[i];
     }
 
-    // We already have enough space: "rewind" if needed to free space at the beginning
-    this.rewind();
-  }
+    this.exports!.soundtouch_put_samples(this.handle, this.inputPtr, numFrames);
+    this.exports!.soundtouch_process(this.handle);
 
-  ensureAdditionalCapacity(numFrames: number): void {
-    this.ensureCapacity(this._frameCount + numFrames);
-  }
+    // 2. Drain ALL available output from WASM into JS FIFO
+    this.drainWasmToFifo();
 
-  private rewind(): void {
-    if (this._positionFrames === 0) return;
-    this._vector.copyWithin(0, this.startIndex, this.endIndex);
-    this._positionFrames = 0;
-  }
-}
+    // 3. Output exactly numFrames from the FIFO
+    const avail = this.fifoAvailable;
+    const availFrames = avail / CHANNELS;
 
-// ------------------------------------------------------------
-// Pipes (rate transposer + time stretch)
-// ------------------------------------------------------------
+    if (availFrames >= numFrames) {
+      // Normal case: enough data in FIFO
+      for (let i = 0; i < numFrames; i++) {
+        let l = this.fifo[this.fifoRead];
+        let r = this.fifo[this.fifoRead + 1];
+        this.fifoRead += CHANNELS;
 
-abstract class AbstractFifoSamplePipe {
-  inputBuffer: FifoSampleBuffer = new FifoSampleBuffer();
-  outputBuffer: FifoSampleBuffer = new FifoSampleBuffer();
-
-  clear(): void {
-    this.inputBuffer.clear();
-    this.outputBuffer.clear();
-  }
-
-  abstract process(): void;
-}
-
-/**
- * RateTransposer: changes the "rate" via linear resampling.
- */
-class RateTransposer extends AbstractFifoSamplePipe {
-  private _rate = 1.0;
-  private slopeCount = 0;
-  private prevSampleL = 0;
-  private prevSampleR = 0;
-
-  set rate(rate: number) {
-    this._rate = rate;
-  }
-
-  reset(): void {
-    this.slopeCount = 0;
-    this.prevSampleL = 0;
-    this.prevSampleR = 0;
-  }
-
-  process(): void {
-    const numFrames = this.inputBuffer.frameCount;
-    if (numFrames === 0) return;
-
-    // Approximation of the number of frames produced
-    this.outputBuffer.ensureAdditionalCapacity(numFrames / this._rate + 1);
-
-    const numFramesOutput = this.transpose(numFrames);
-    this.inputBuffer.receive(numFrames);
-    this.outputBuffer.put(numFramesOutput);
-  }
-
-  private transpose(numFrames: number): number {
-    if (numFrames === 0) return 0;
-
-    const src = this.inputBuffer.vector;
-    const srcOffset = this.inputBuffer.startIndex;
-    const dest = this.outputBuffer.vector;
-    const destOffset = this.outputBuffer.endIndex;
-
-    let used = 0;
-    let outFrames = 0;
-
-    // First point: interpolation from "prevSample"
-    while (this.slopeCount < 1.0) {
-      dest[destOffset + CHANNELS * outFrames] =
-        (1.0 - this.slopeCount) * this.prevSampleL + this.slopeCount * src[srcOffset];
-      dest[destOffset + CHANNELS * outFrames + 1] =
-        (1.0 - this.slopeCount) * this.prevSampleR + this.slopeCount * src[srcOffset + 1];
-
-      outFrames++;
-      this.slopeCount += this._rate;
-    }
-    this.slopeCount -= 1.0;
-
-    if (numFrames !== 1) {
-      // Standard interpolation between src[used] and src[used+1]
-      outer: while (true) {
-        while (this.slopeCount > 1.0) {
-          this.slopeCount -= 1.0;
-          used++;
-          if (used >= numFrames - 1) break outer;
+        // Apply fade-in on first audio arrival to prevent initial click
+        if (!this.audioStarted) {
+          this.audioStarted = true;
+          this.fadeInPos = 0;
+        }
+        if (this.fadeInPos < FADE_IN_FRAMES) {
+          const gain = this.fadeInPos / FADE_IN_FRAMES;
+          l *= gain;
+          r *= gain;
+          this.fadeInPos++;
         }
 
-        const srcIndex = srcOffset + CHANNELS * used;
-        dest[destOffset + CHANNELS * outFrames] =
-          (1.0 - this.slopeCount) * src[srcIndex] + this.slopeCount * src[srcIndex + 2];
-        dest[destOffset + CHANNELS * outFrames + 1] =
-          (1.0 - this.slopeCount) * src[srcIndex + 1] + this.slopeCount * src[srcIndex + 3];
-
-        outFrames++;
-        this.slopeCount += this._rate;
+        leftOut[i] = Number.isFinite(l) ? l : 0;
+        rightOut[i] = Number.isFinite(r) ? r : 0;
       }
-    }
+    } else if (availFrames > 0) {
+      // Partial: output what we have, hold last sample for the rest
+      const partial = Math.floor(availFrames);
+      let lastL = 0, lastR = 0;
 
-    // Store the last sample for the next interpolation
-    this.prevSampleL = src[srcOffset + CHANNELS * numFrames - 2];
-    this.prevSampleR = src[srcOffset + CHANNELS * numFrames - 1];
+      for (let i = 0; i < partial; i++) {
+        lastL = this.fifo[this.fifoRead];
+        lastR = this.fifo[this.fifoRead + 1];
+        this.fifoRead += CHANNELS;
 
-    return outFrames;
-  }
-}
-
-// --- Stretch configuration (time-stretch) ---
-const DEFAULT_SEQUENCE_MS = 0; // 0 = auto
-const DEFAULT_SEEKWINDOW_MS = 0; // 0 = auto
-const DEFAULT_OVERLAP_MS = 8;
-
-const SCAN_OFFSETS: number[][] = [
-  [124, 186, 248, 310, 372, 434, 496, 558, 620, 682, 744, 806, 868, 930, 992, 1054, 1116, 1178, 1240, 1302, 1364, 1426, 1488, 0],
-  [-100, -75, -50, -25, 25, 50, 75, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [-20, -15, -10, -5, 5, 10, 15, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [-4, -3, -2, -1, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-];
-
-const AUTOSEQ_TEMPO_LOW = 0.25;
-const AUTOSEQ_TEMPO_TOP = 4.0;
-const AUTOSEQ_AT_MIN = 125.0;
-const AUTOSEQ_AT_MAX = 50.0;
-const AUTOSEQ_K = (AUTOSEQ_AT_MAX - AUTOSEQ_AT_MIN) / (AUTOSEQ_TEMPO_TOP - AUTOSEQ_TEMPO_LOW);
-const AUTOSEQ_C = AUTOSEQ_AT_MIN - AUTOSEQ_K * AUTOSEQ_TEMPO_LOW;
-
-const AUTOSEEK_AT_MIN = 25.0;
-const AUTOSEEK_AT_MAX = 15.0;
-const AUTOSEEK_K = (AUTOSEEK_AT_MAX - AUTOSEEK_AT_MIN) / (AUTOSEQ_TEMPO_TOP - AUTOSEQ_TEMPO_LOW);
-const AUTOSEEK_C = AUTOSEEK_AT_MIN - AUTOSEEK_K * AUTOSEQ_TEMPO_LOW;
-
-/**
- * Stretch : time-stretch (WSOLA-ish) qui ajuste la durée sans changer le pitch.
- */
-class Stretch extends AbstractFifoSamplePipe {
-  private quickSeek = true;
-
-  private sampleRate: number;
-  private overlapMs = DEFAULT_OVERLAP_MS;
-  private sequenceMs = DEFAULT_SEQUENCE_MS;
-  private seekWindowMs = DEFAULT_SEEKWINDOW_MS;
-
-  private autoSeqSetting = true;
-  private autoSeekSetting = true;
-
-  private overlapLength = 0; // frames
-  private seekWindowLength = 0; // frames
-  private seekLength = 0; // frames
-
-  private nominalSkip = 0;
-  private skipFract = 0;
-  private sampleReq = 0;
-
-  private _tempo = 1.0;
-
-  private midBuffer: Float32Array = new Float32Array(0);
-  private refMidBuffer: Float32Array = new Float32Array(0);
-  private midBufferInitialized = false;
-
-  // Pre-computed windows for performance
-  private correlationWeights: Float32Array = new Float32Array(0);
-  private fadeInWindow: Float32Array = new Float32Array(0);
-  private fadeOutWindow: Float32Array = new Float32Array(0);
-  private windowsDirty = true;
-
-  constructor(sampleRate: number) {
-    super();
-    this.sampleRate = sampleRate;
-    this.setParameters(sampleRate, DEFAULT_SEQUENCE_MS, DEFAULT_SEEKWINDOW_MS, DEFAULT_OVERLAP_MS);
-  }
-
-  clear(): void {
-    super.clear();
-    this.midBufferInitialized = false;
-  }
-
-  /**
-   * Pre-compute correlation weights and fade windows for better performance.
-   * Uses cosine windowing for smoother transitions (reduces wobbliness).
-   */
-  private updatePrecomputedWindows(): void {
-    if (this.overlapLength === 0) return;
-
-    const length = this.overlapLength;
-    this.correlationWeights = new Float32Array(length);
-    this.fadeInWindow = new Float32Array(length);
-    this.fadeOutWindow = new Float32Array(length);
-
-    // Pre-compute correlation weights (parabolic window)
-    for (let i = 0; i < length; i++) {
-      this.correlationWeights[i] = i * (length - i);
-    }
-
-    // Pre-compute fade windows using cosine (smoother than linear)
-    // This reduces amplitude modulation artifacts (wobbliness)
-    const piOverLength = Math.PI / length;
-    for (let i = 0; i < length; i++) {
-      // Cosine fade-in: 0.5 * (1 - cos(π * i / length))
-      this.fadeInWindow[i] = 0.5 * (1 - Math.cos(piOverLength * i));
-      // Cosine fade-out: 0.5 * (1 + cos(π * i / length))
-      this.fadeOutWindow[i] = 0.5 * (1 + Math.cos(piOverLength * i));
-    }
-
-    this.windowsDirty = false;
-  }
-
-  set tempo(newTempo: number) {
-    this._tempo = newTempo;
-    this.calculateSequenceParameters();
-
-    this.nominalSkip = this._tempo * (this.seekWindowLength - this.overlapLength);
-    this.skipFract = 0;
-
-    const intSkip = Math.floor(this.nominalSkip + 0.5);
-    this.sampleReq = Math.max(intSkip + this.overlapLength, this.seekWindowLength) + this.seekLength;
-  }
-
-  get tempo(): number {
-    return this._tempo;
-  }
-
-  setParameters(sampleRate: number, sequenceMs: number, seekWindowMs: number, overlapMs: number): void {
-    if (sampleRate > 0) this.sampleRate = sampleRate;
-    if (overlapMs > 0) this.overlapMs = overlapMs;
-
-    if (sequenceMs > 0) {
-      this.sequenceMs = sequenceMs;
-      this.autoSeqSetting = false;
-    } else {
-      this.autoSeqSetting = true;
-    }
-
-    if (seekWindowMs > 0) {
-      this.seekWindowMs = seekWindowMs;
-      this.autoSeekSetting = false;
-    } else {
-      this.autoSeekSetting = true;
-    }
-
-    this.calculateSequenceParameters();
-    this.calculateOverlapLength(this.overlapMs);
-
-    // Force recalculation of tempo-dependent sizes
-    this.tempo = this._tempo;
-    this.midBufferInitialized = false;
-    
-    // Ensure windows are computed
-    if (this.windowsDirty) {
-      this.updatePrecomputedWindows();
-    }
-  }
-
-  process(): void {
-    // First initialization: fill midBuffer with overlapLength frames
-    if (!this.midBufferInitialized) {
-      if (this.inputBuffer.frameCount < this.overlapLength) return;
-      this.inputBuffer.receiveSamples(this.midBuffer, this.overlapLength);
-      this.midBufferInitialized = true;
-    }
-
-    // While we have enough input data for one iteration
-    while (this.inputBuffer.frameCount >= this.sampleReq) {
-      const offset = this.seekBestOverlapPosition();
-
-      // 1) Overlap-add of overlapLength frames
-      this.outputBuffer.ensureAdditionalCapacity(this.overlapLength);
-      this.overlap(offset);
-      this.outputBuffer.put(this.overlapLength);
-
-      // 2) Copy the "middle" (without overlap)
-      const nonOverlap = this.seekWindowLength - 2 * this.overlapLength;
-      if (nonOverlap > 0) {
-        this.outputBuffer.putBuffer(this.inputBuffer, offset + this.overlapLength, nonOverlap);
-      }
-
-      // 3) Update midBuffer (last overlap of window) for next iteration
-      const start =
-        this.inputBuffer.startIndex +
-        CHANNELS * (offset + this.seekWindowLength - this.overlapLength);
-      this.midBuffer.set(this.inputBuffer.vector.subarray(start, start + CHANNELS * this.overlapLength));
-
-      // 4) Advance in input according to tempo
-      this.skipFract += this.nominalSkip;
-      const overlapSkip = Math.floor(this.skipFract);
-      this.skipFract -= overlapSkip;
-      this.inputBuffer.receive(overlapSkip);
-    }
-  }
-
-  private calculateOverlapLength(overlapInMs: number): void {
-    let newOvl = (this.sampleRate * overlapInMs) / 1000;
-    newOvl = newOvl < 16 ? 16 : newOvl;
-    newOvl -= newOvl % 8;
-
-    const oldOverlapLength = this.overlapLength;
-    this.overlapLength = Math.floor(newOvl);
-    
-    // Reallocate buffers if overlap length changed
-    if (oldOverlapLength !== this.overlapLength) {
-      this.refMidBuffer = new Float32Array(this.overlapLength * CHANNELS);
-      this.midBuffer = new Float32Array(this.overlapLength * CHANNELS);
-      this.windowsDirty = true;
-      this.updatePrecomputedWindows();
-    }
-  }
-
-  private calculateSequenceParameters(): void {
-    if (this.autoSeqSetting) {
-      const seq = clamp(AUTOSEQ_C + AUTOSEQ_K * this._tempo, AUTOSEQ_AT_MAX, AUTOSEQ_AT_MIN);
-      this.sequenceMs = Math.floor(seq + 0.5);
-    }
-
-    if (this.autoSeekSetting) {
-      const seek = clamp(AUTOSEEK_C + AUTOSEEK_K * this._tempo, AUTOSEEK_AT_MAX, AUTOSEEK_AT_MIN);
-      this.seekWindowMs = Math.floor(seek + 0.5);
-    }
-
-    this.seekWindowLength = Math.floor((this.sampleRate * this.sequenceMs) / 1000);
-    this.seekLength = Math.floor((this.sampleRate * this.seekWindowMs) / 1000);
-  }
-
-  private seekBestOverlapPosition(): number {
-    return this.quickSeek ? this.seekBestOverlapPositionStereoQuick() : this.seekBestOverlapPositionStereo();
-  }
-
-  private seekBestOverlapPositionStereo(): number {
-    this.preCalculateCorrelationReferenceStereo();
-
-    let bestOffset = 0;
-    let bestCorrelation = -Infinity;
-
-    // Use stride to reduce computation for initial search
-    const stride = Math.max(1, Math.floor(this.seekLength / 64));
-    let coarseBestOffset = 0;
-    let coarseBestCorrelation = -Infinity;
-
-    // Coarse search with stride
-    for (let offset = 0; offset < this.seekLength; offset += stride) {
-      const requiredFrames = offset + this.overlapLength;
-      if (requiredFrames > this.inputBuffer.frameCount) break;
-
-      const correlation = this.calculateCrossCorrelationStereo(offset, this.refMidBuffer);
-      if (correlation > coarseBestCorrelation && Number.isFinite(correlation)) {
-        coarseBestCorrelation = correlation;
-        coarseBestOffset = offset;
-      }
-    }
-
-    // Fine search around coarse best
-    const searchStart = Math.max(0, coarseBestOffset - stride);
-    const searchEnd = Math.min(this.seekLength, coarseBestOffset + stride + 1);
-    for (let offset = searchStart; offset < searchEnd; offset++) {
-      const requiredFrames = offset + this.overlapLength;
-      if (requiredFrames > this.inputBuffer.frameCount) break;
-
-      const correlation = this.calculateCrossCorrelationStereo(offset, this.refMidBuffer);
-      if (correlation > bestCorrelation && Number.isFinite(correlation)) {
-        bestCorrelation = correlation;
-        bestOffset = offset;
-      }
-    }
-
-    return bestOffset;
-  }
-
-  private seekBestOverlapPositionStereoQuick(): number {
-    this.preCalculateCorrelationReferenceStereo();
-
-    let bestOffset = 0;
-    let bestCorrelation = -Infinity;
-    let correlationOffset = 0;
-
-    for (let scanPass = 0; scanPass < 4; scanPass++) {
-      const offsets = SCAN_OFFSETS[scanPass];
-      for (let j = 0; offsets[j] !== 0; j++) {
-        const tempOffset = correlationOffset + offsets[j];
-        // Validate bounds: must be positive and within seekLength
-        if (tempOffset < 0 || tempOffset >= this.seekLength) break;
-        // Ensure we have enough data in input buffer for this offset
-        const requiredFrames = tempOffset + this.overlapLength;
-        if (requiredFrames > this.inputBuffer.frameCount) break;
-
-        const correlation = this.calculateCrossCorrelationStereo(tempOffset, this.refMidBuffer);
-        if (correlation > bestCorrelation && Number.isFinite(correlation)) {
-          bestCorrelation = correlation;
-          bestOffset = tempOffset;
+        if (!this.audioStarted) {
+          this.audioStarted = true;
+          this.fadeInPos = 0;
         }
+        if (this.fadeInPos < FADE_IN_FRAMES) {
+          const gain = this.fadeInPos / FADE_IN_FRAMES;
+          lastL *= gain;
+          lastR *= gain;
+          this.fadeInPos++;
+        }
+
+        leftOut[i] = Number.isFinite(lastL) ? lastL : 0;
+        rightOut[i] = Number.isFinite(lastR) ? lastR : 0;
       }
-      correlationOffset = bestOffset;
-    }
 
-    return bestOffset;
-  }
-
-  /**
-   * Prépare le buffer de référence pour corrélation (pondération).
-   * Uses pre-computed weights for better performance.
-   */
-  private preCalculateCorrelationReferenceStereo(): void {
-    if (this.windowsDirty) {
-      this.updatePrecomputedWindows();
-    }
-
-    // Use pre-computed weights instead of recalculating
-    for (let i = 0; i < this.overlapLength; i++) {
-      const weight = this.correlationWeights[i];
-      const idx = CHANNELS * i;
-      this.refMidBuffer[idx] = this.midBuffer[idx] * weight;
-      this.refMidBuffer[idx + 1] = this.midBuffer[idx + 1] * weight;
-    }
-  }
-
-  /**
-   * Corrélation croisée stéréo entre `midBuffer` (référence) et l'entrée
-   * à partir de `offsetFrames`.
-   * Optimized for better CPU cache usage and vectorization.
-   */
-  private calculateCrossCorrelationStereo(offsetFrames: number, compare: Float32Array): number {
-    const mixing = this.inputBuffer.vector;
-    const mixingPosition = this.inputBuffer.startIndex + CHANNELS * offsetFrames;
-    const overlapLength = this.overlapLength;
-
-    // Cache frequently accessed values
-    let correlation = 0;
-    
-    // Process in pairs for better vectorization
-    // i starts at 2 as in original impl (small skip)
-    const startFrame = 1; // Start from frame 1 (sample index 2)
-    const endFrame = overlapLength;
-    
-    // Unroll loop for better performance
-    let i = startFrame;
-    const step = 2; // Process 2 frames at a time
-    
-    // Process pairs
-    for (; i < endFrame - 1; i += step) {
-      const idx0 = CHANNELS * i;
-      const idx1 = CHANNELS * (i + 1);
-      const mixIdx0 = mixingPosition + idx0;
-      const mixIdx1 = mixingPosition + idx1;
-      
-      correlation += mixing[mixIdx0] * compare[idx0] + mixing[mixIdx0 + 1] * compare[idx0 + 1];
-      correlation += mixing[mixIdx1] * compare[idx1] + mixing[mixIdx1 + 1] * compare[idx1 + 1];
-    }
-    
-    // Handle remaining frame if odd number
-    if (i < endFrame) {
-      const idx = CHANNELS * i;
-      const mixIdx = mixingPosition + idx;
-      correlation += mixing[mixIdx] * compare[idx] + mixing[mixIdx + 1] * compare[idx + 1];
-    }
-
-    return correlation;
-  }
-
-  /**
-   * Overlap-add of `overlapLength` frames starting from `offsetFrames`.
-   * Uses pre-computed cosine windows for smoother transitions.
-   */
-  private overlap(offsetFrames: number): void {
-    if (this.windowsDirty) {
-      this.updatePrecomputedWindows();
-    }
-
-    const input = this.inputBuffer.vector;
-    const inputPosition = this.inputBuffer.startIndex + CHANNELS * offsetFrames;
-
-    const output = this.outputBuffer.vector;
-    const outputPosition = this.outputBuffer.endIndex;
-
-    // Use pre-computed fade windows (cosine instead of linear)
-    for (let i = 0; i < this.overlapLength; i++) {
-      const fadeIn = this.fadeInWindow[i];
-      const fadeOut = this.fadeOutWindow[i];
-
-      const ctx = CHANNELS * i;
-      const inIdx = inputPosition + ctx;
-      const outIdx = outputPosition + ctx;
-
-      output[outIdx] = input[inIdx] * fadeIn + this.midBuffer[ctx] * fadeOut;
-      output[outIdx + 1] = input[inIdx + 1] * fadeIn + this.midBuffer[ctx + 1] * fadeOut;
-    }
-  }
-}
-
-/**
- * SoundTouch : combine Stretch + RateTransposer.
- *
- * Le “pitch shift” est réalisé via combinaison tempo/rate :
- * - pitch change = rate * pitch, tempo = tempo / pitch
- */
-class SoundTouch {
-  readonly inputBuffer = new FifoSampleBuffer();
-  readonly outputBuffer = new FifoSampleBuffer();
-  private readonly intermediateBuffer = new FifoSampleBuffer();
-
-  private readonly transposer = new RateTransposer();
-  private readonly stretch: Stretch;
-
-  private _rate = 1.0;
-  private _tempo = 1.0;
-
-  private virtualPitch = 1.0;
-  private virtualRate = 1.0;
-  private virtualTempo = 1.0;
-
-  constructor(sampleRate: number) {
-    this.stretch = new Stretch(sampleRate);
-    this.calculateEffectiveRateAndTempo();
-  }
-
-  clear(): void {
-    this.transposer.clear();
-    this.stretch.clear();
-    this.inputBuffer.clear();
-    this.intermediateBuffer.clear();
-    this.outputBuffer.clear();
-  }
-
-  set rate(rate: number) {
-    this.virtualRate = rate;
-    this.calculateEffectiveRateAndTempo();
-  }
-
-  get rate(): number {
-    return this._rate;
-  }
-
-  set tempo(tempo: number) {
-    this.virtualTempo = tempo;
-    this.calculateEffectiveRateAndTempo();
-  }
-
-  get tempo(): number {
-    return this._tempo;
-  }
-
-  /**
-   * `pitch` ici est un ratio (1.0 = pas de changement).
-   * Pour des demi-tons, utiliser `2^(semitones/12)`.
-   */
-  set pitch(pitch: number) {
-    this.virtualPitch = pitch;
-    this.calculateEffectiveRateAndTempo();
-  }
-
-  process(): void {
-    // Ordonne Stretch/Transposer selon le rate effectif (comme SoundTouch)
-    if (this._rate > 1.0) {
-      this.stretch.process();
-      this.transposer.process();
-    } else {
-      this.transposer.process();
-      this.stretch.process();
-    }
-  }
-
-  private calculateEffectiveRateAndTempo(): void {
-    const previousTempo = this._tempo;
-    const previousRate = this._rate;
-
-    // “effective” rate & tempo
-    this._tempo = this.virtualTempo / this.virtualPitch;
-    this._rate = this.virtualRate * this.virtualPitch;
-
-    if (hasSignificantChange(this._tempo, previousTempo)) {
-      this.stretch.tempo = this._tempo;
-    }
-    if (hasSignificantChange(this._rate, previousRate)) {
-      this.transposer.rate = this._rate;
-    }
-
-    // Reconnecte les buffers selon la direction (rate > 1 => stretch->transposer)
-    if (this._rate > 1.0) {
-      if (this.transposer.outputBuffer !== this.outputBuffer) {
-        this.stretch.inputBuffer = this.inputBuffer;
-        this.stretch.outputBuffer = this.intermediateBuffer;
-        this.transposer.inputBuffer = this.intermediateBuffer;
-        this.transposer.outputBuffer = this.outputBuffer;
+      // Hold last sample value instead of zero-padding (prevents clicks)
+      for (let i = partial; i < numFrames; i++) {
+        leftOut[i] = lastL;
+        rightOut[i] = lastR;
       }
     } else {
-      if (this.stretch.outputBuffer !== this.outputBuffer) {
-        this.transposer.inputBuffer = this.inputBuffer;
-        this.transposer.outputBuffer = this.intermediateBuffer;
-        this.stretch.inputBuffer = this.intermediateBuffer;
-        this.stretch.outputBuffer = this.outputBuffer;
-      }
+      // No output yet (initial latency): output silence
+      leftOut.fill(0);
+      if (rightOut !== leftOut) rightOut.fill(0);
     }
+
+    this.compactFifo();
+  }
+
+  private drainWasmToFifo(): void {
+    const outSamples = this.outputFrames * CHANNELS;
+
+    // Loop: keep reading until the WASM has no more output
+    for (;;) {
+      // Re-acquire memory view (WASM calls may grow memory)
+      const mem = new Float32Array(this.exports!.memory.buffer);
+      const outOff = this.outputPtr >> 2;
+
+      const received = this.exports!.soundtouch_receive_samples(
+        this.handle, this.outputPtr, this.outputFrames
+      );
+      if (received === 0) break;
+
+      const samplesReceived = received * CHANNELS;
+
+      // Ensure FIFO has space
+      const needed = this.fifoWrite + samplesReceived;
+      if (needed > this.fifo.length) {
+        const newSize = Math.max(this.fifo.length * 2, needed + 4096);
+        const bigger = new Float32Array(newSize);
+        bigger.set(this.fifo.subarray(0, this.fifoWrite));
+        this.fifo = bigger;
+      }
+
+      // Re-acquire view after potential FIFO reallocation (not needed
+      // for WASM memory but let's be safe after any allocation)
+      const mem2 = new Float32Array(this.exports!.memory.buffer);
+      const outOff2 = this.outputPtr >> 2;
+
+      // Copy from WASM output buffer into FIFO
+      for (let i = 0; i < samplesReceived; i++) {
+        this.fifo[this.fifoWrite + i] = mem2[outOff2 + i];
+      }
+      this.fifoWrite += samplesReceived;
+    }
+  }
+
+  private compactFifo(): void {
+    // Shift remaining data to the front when we've consumed enough
+    if (this.fifoRead > 4096) {
+      const remaining = this.fifoWrite - this.fifoRead;
+      if (remaining > 0) {
+        this.fifo.copyWithin(0, this.fifoRead, this.fifoWrite);
+      }
+      this.fifoWrite = remaining;
+      this.fifoRead = 0;
+    }
+  }
+
+  destroy(): void {
+    if (!this.exports) return;
+    if (this.inputPtr) {
+      this.exports.wasm_dealloc(this.inputPtr, this.inputFrames * CHANNELS * 4);
+    }
+    if (this.outputPtr) {
+      this.exports.wasm_dealloc(this.outputPtr, this.outputFrames * CHANNELS * 4);
+    }
+    this.inputPtr = 0;
+    this.outputPtr = 0;
+    this.inputFrames = 0;
+    this.outputFrames = 0;
+    if (this.handle) {
+      this.exports.soundtouch_free(this.handle);
+      this.handle = 0;
+    }
+    this.exports = null;
   }
 }
 
@@ -775,21 +304,27 @@ function paramValue(params: WorkletParams, name: keyof WorkletParams, fallback: 
 }
 
 class SoundTouchProcessor extends AudioWorkletProcessor {
-  private readonly pipe = new SoundTouch(sampleRate);
-  private readonly inputInterleaved = new Float32Array(RENDER_QUANTUM_FRAMES * CHANNELS);
-  private readonly outputInterleaved = new Float32Array(RENDER_QUANTUM_FRAMES * CHANNELS);
+  private readonly wasmPipe = new WasmSoundTouch();
+
+  constructor() {
+    super();
+    this.port.onmessage = (e: MessageEvent) => {
+      if (e.data?.type === 'load-wasm' && e.data.wasm instanceof ArrayBuffer) {
+        const ok = this.wasmPipe.init(e.data.wasm, sampleRate);
+        this.port.postMessage({ type: 'wasm-loaded', success: ok });
+      }
+    };
+  }
 
   process(inputs: Float32Array[][], outputs: Float32Array[][], parameters: WorkletParams): boolean {
     const input = inputs[0];
     const output = outputs[0];
 
-    // Si aucune sortie, stop
     if (!output || output.length === 0) return false;
 
     const leftOut = output[0];
     const rightOut = output[1] ?? output[0];
 
-    // If no input, output silence
     if (!input || input.length === 0 || !input[0]) {
       leftOut.fill(0);
       if (rightOut !== leftOut) rightOut.fill(0);
@@ -799,76 +334,26 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
     const leftIn = input[0];
     const rightIn = input[1] ?? input[0];
 
-    // Parameters
+    if (!this.wasmPipe.ready) {
+      leftOut.set(leftIn);
+      rightOut.set(rightIn);
+      return true;
+    }
+
     const rate = paramValue(parameters, 'rate', 1.0);
     const tempo = paramValue(parameters, 'tempo', 1.0);
     const pitch = paramValue(parameters, 'pitch', 1.0);
     const pitchSemitones = paramValue(parameters, 'pitchSemitones', 0);
+    const effectivePitch = pitch * Math.pow(2, pitchSemitones / 12);
 
-    // Apply to pipeline
-    this.pipe.rate = rate;
-    this.pipe.tempo = tempo;
-    this.pipe.pitch = pitch * Math.pow(2, pitchSemitones / 12);
-
-    // Interleave input (optimized loop)
-    const length = leftIn.length;
-    const inputInterleaved = this.inputInterleaved;
-    
-    // Process in pairs for better performance
-    let idx = 0;
-    for (; idx < length - 1; idx += 2) {
-      const outIdx0 = idx * 2;
-      const outIdx1 = (idx + 1) * 2;
-      inputInterleaved[outIdx0] = leftIn[idx];
-      inputInterleaved[outIdx0 + 1] = rightIn[idx];
-      inputInterleaved[outIdx1] = leftIn[idx + 1];
-      inputInterleaved[outIdx1 + 1] = rightIn[idx + 1];
-    }
-    
-    // Handle remaining sample if odd length
-    if (idx < length) {
-      const outIdx = idx * 2;
-      inputInterleaved[outIdx] = leftIn[idx];
-      inputInterleaved[outIdx + 1] = rightIn[idx];
-    }
-
-    // Process
-    this.pipe.inputBuffer.putSamples(this.inputInterleaved, 0, leftIn.length);
-    this.pipe.process();
-
-    // De-interleave output (if not enough frames available => silence on the rest)
-    this.outputInterleaved.fill(0);
-    this.pipe.outputBuffer.receiveSamples(this.outputInterleaved, leftOut.length);
-
-    // Optimized de-interleaving with NaN protection
-    const outputLength = leftOut.length;
-    const outputInterleaved = this.outputInterleaved;
-    
-    // Process in pairs for better performance
-    let outIdx = 0;
-    for (; outIdx < outputLength - 1; outIdx += 2) {
-      const inIdx0 = outIdx * 2;
-      const inIdx1 = (outIdx + 1) * 2;
-      
-      const l0 = outputInterleaved[inIdx0];
-      const r0 = outputInterleaved[inIdx0 + 1];
-      const l1 = outputInterleaved[inIdx1];
-      const r1 = outputInterleaved[inIdx1 + 1];
-      
-      // NaN protection
-      leftOut[outIdx] = Number.isFinite(l0) ? l0 : 0;
-      rightOut[outIdx] = Number.isFinite(r0) ? r0 : 0;
-      leftOut[outIdx + 1] = Number.isFinite(l1) ? l1 : 0;
-      rightOut[outIdx + 1] = Number.isFinite(r1) ? r1 : 0;
-    }
-    
-    // Handle remaining sample if odd length
-    if (outIdx < outputLength) {
-      const inIdx = outIdx * 2;
-      const l = outputInterleaved[inIdx];
-      const r = outputInterleaved[inIdx + 1];
-      leftOut[outIdx] = Number.isFinite(l) ? l : 0;
-      rightOut[outIdx] = Number.isFinite(r) ? r : 0;
+    try {
+      this.wasmPipe.setRate(rate);
+      this.wasmPipe.setTempo(tempo);
+      this.wasmPipe.setPitch(effectivePitch);
+      this.wasmPipe.processQuantum(leftIn, rightIn, leftOut, rightOut);
+    } catch {
+      leftOut.set(leftIn);
+      rightOut.set(rightIn);
     }
 
     return true;
@@ -885,4 +370,3 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor('soundtouch-processor', SoundTouchProcessor);
-

@@ -9,6 +9,7 @@ import { build, context } from 'esbuild';
 import { readdir, copyFile, mkdir, stat } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -69,6 +70,41 @@ const buildOptions = {
 };
 
 /**
+ * Compiles the Rust crate to WASM and copies the binary to dist/audio/.
+ * Requires: rustup with wasm32-unknown-unknown target.
+ * Falls back gracefully if Rust is not installed.
+ */
+async function buildWasm() {
+  const wasmCrateDir = join(__dirname, 'wasm');
+  const distAudioDir = join(__dirname, 'dist', 'audio');
+
+  try {
+    await stat(wasmCrateDir);
+  } catch {
+    console.log('⚠ wasm/ directory not found, skipping WASM build');
+    return;
+  }
+
+  try {
+    console.log('🦀 Building WASM from Rust...');
+    execSync(
+      'cargo build --release --target wasm32-unknown-unknown',
+      { cwd: wasmCrateDir, stdio: 'pipe', env: { ...process.env, PATH: `${process.env.HOME}/.cargo/bin:${process.env.PATH}` } }
+    );
+
+    const wasmSrc = join(
+      wasmCrateDir, 'target', 'wasm32-unknown-unknown', 'release', 'soundtouch_wasm.wasm'
+    );
+    await mkdir(distAudioDir, { recursive: true });
+    await copyFile(wasmSrc, join(distAudioDir, 'soundtouch.wasm'));
+    console.log('✓ WASM built and copied to dist/audio/soundtouch.wasm');
+  } catch (err) {
+    console.warn('⚠ WASM build failed (Rust/cargo not installed?). JS fallback will be used.');
+    console.warn('  ', err.message || err);
+  }
+}
+
+/**
  * Main build function
  */
 async function main() {
@@ -76,6 +112,9 @@ async function main() {
   
   // Copy static files
   await copyStaticFiles();
+  
+  // Build WASM (before TS so fallback is always ready)
+  await buildWasm();
   
   if (isWatch) {
     console.log('👀 Watch mode enabled\n');

@@ -21,6 +21,7 @@ declare global {
 
 const WORKLET_NAME = 'soundtouch-processor';
 const WORKLET_PATH = 'audio/processor.js';
+const WASM_PATH = 'audio/soundtouch.wasm';
 const FADE_TIME_S = 0.150;
 const BASE_HZ = 440.0;
 
@@ -28,15 +29,30 @@ class PitchShifterContentScript {
   private params: GlobalAudioParams | null = null;
   private audioContext: AudioContext | null = null;
   private workletLoaded: Promise<void> | null = null;
+  private wasmBytes: ArrayBuffer | null = null;
   private readonly processed = new WeakMap<HTMLMediaElement, ProcessedElementData>();
 
   async start(): Promise<void> {
     console.log('Match My Tone: content script loaded.');
     this.installMessageListener();
     await this.loadInitialParams();
+    this.fetchWasmBinary();
     await this.initAudioContext();
     this.setupInitialMedia();
     this.observeDom();
+  }
+
+  private fetchWasmBinary(): void {
+    const url = browser.runtime.getURL(WASM_PATH);
+    fetch(url)
+      .then((r) => r.arrayBuffer())
+      .then((buf) => {
+        this.wasmBytes = buf;
+        console.log(`Match My Tone: WASM binary loaded (${buf.byteLength} bytes).`);
+      })
+      .catch((err) => {
+        console.warn('Match My Tone: WASM binary not available.', err);
+      });
   }
 
   // ------------------------------------------------------------------
@@ -137,6 +153,10 @@ class PitchShifterContentScript {
       } else {
         bypassGain.gain.setValueAtTime(1.0, now);
         effectGain.gain.setValueAtTime(0.0, now);
+      }
+
+      if (this.wasmBytes) {
+        workletNode.port.postMessage({ type: 'load-wasm', wasm: this.wasmBytes });
       }
 
       this.processed.set(element, { source, workletNode, bypassGain, effectGain });

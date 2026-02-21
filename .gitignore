@@ -3,6 +3,7 @@ node_modules/
 
 # Fichiers compilés
 dist/
+wasm/target/
 
 # Packages
 *.zip

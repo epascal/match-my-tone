@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "default_locale": "en",
   "name": "__MSG_extensionName__",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "__MSG_extensionDescription__",
   "permissions": [
     "activeTab",
@@ -26,7 +26,8 @@
     }
   ],
   "web_accessible_resources": [
-    "audio/processor.js"
+    "audio/processor.js",
+    "audio/soundtouch.wasm"
   ],
   "browser_action": {
     "default_title": "__MSG_browserActionTitle__",

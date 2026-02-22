@@ -44,6 +44,7 @@ type PopupDom = {
   semitonesValue: HTMLSpanElement;
   hz: HTMLInputElement;
   hzValue: HTMLSpanElement;
+  agcEnabled: HTMLInputElement;
 };
 
 /**
@@ -62,6 +63,7 @@ class PitchShifterPopup {
       semitonesValue: mustGetElement<HTMLSpanElement>('semitonesValue'),
       hz: mustGetElement<HTMLInputElement>('hz'),
       hzValue: mustGetElement<HTMLSpanElement>('hzValue'),
+      agcEnabled: mustGetElement<HTMLInputElement>('agcEnabled'),
     };
   }
 
@@ -110,6 +112,11 @@ class PitchShifterPopup {
       this.dom.hzValue.textContent = this.dom.hz.value;
       void this.pushUiParams();
     });
+
+    // AGC
+    this.dom.agcEnabled.addEventListener('change', () => {
+      void this.pushUiParams();
+    });
   }
 
   private readUiParams(): RawAudioParams {
@@ -117,6 +124,7 @@ class PitchShifterPopup {
       isEnabled: this.dom.enabled.checked,
       semitons: parseFloat(this.dom.semitones.value),
       hz: parseFloat(this.dom.hz.value),
+      agcEnabled: this.dom.agcEnabled.checked,
     };
   }
 
@@ -126,6 +134,7 @@ class PitchShifterPopup {
     this.dom.semitonesValue.textContent = params.semitons.toFixed(1);
     this.dom.hz.value = params.hz.toString();
     this.dom.hzValue.textContent = params.hz.toString();
+    this.dom.agcEnabled.checked = params.agcEnabled;
   }
 
   // ------------------------------------------------------------

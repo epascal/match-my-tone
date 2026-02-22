@@ -86,13 +86,17 @@ class PitchShifterContentScript {
       console.log('Match My Tone: Initial parameters loaded', this.params);
     } catch (err) {
       console.error('Match My Tone: Unable to get initial parameters.', err);
-      this.params = { pitch: 0, isEnabled: false };
+      this.params = { pitch: 0, isEnabled: false, agcEnabled: false };
     }
   }
 
   private toGlobalParams(raw: RawAudioParams): GlobalAudioParams {
     const hzInSemitones = 12 * Math.log2(raw.hz / BASE_HZ);
-    return { pitch: raw.semitons + hzInSemitones, isEnabled: raw.isEnabled };
+    return {
+      pitch: raw.semitons + hzInSemitones,
+      isEnabled: raw.isEnabled,
+      agcEnabled: raw.agcEnabled,
+    };
   }
 
   // ------------------------------------------------------------------
@@ -141,6 +145,7 @@ class PitchShifterContentScript {
 
       workletNode.parameters.get('pitchSemitones')?.setValueAtTime(this.params.pitch, now);
       workletNode.parameters.get('tempo')?.setValueAtTime(1.0, now);
+      workletNode.parameters.get('agcEnabled')?.setValueAtTime(this.params.agcEnabled ? 1.0 : 0.0, now);
 
       // Path A: bypass -> destination
       source.connect(bypassGain).connect(this.audioContext.destination);
@@ -182,6 +187,10 @@ class PitchShifterContentScript {
       data.workletNode.parameters
         .get('pitchSemitones')
         ?.linearRampToValueAtTime(params.pitch, now + FADE_TIME_S);
+
+      data.workletNode.parameters
+        .get('agcEnabled')
+        ?.setValueAtTime(params.agcEnabled ? 1.0 : 0.0, now);
 
       if (stateChanged) {
         data.bypassGain.gain.cancelScheduledValues(now);

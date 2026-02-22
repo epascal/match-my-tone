@@ -1,3 +1,4 @@
+use crate::agc::Agc;
 use crate::phase_vocoder::PhaseVocoder;
 use crate::resampler::SincResampler;
 
@@ -13,40 +14,40 @@ const FLOAT_EPSILON: f32 = 1e-10;
 ///   effective_tempo = virtual_tempo / virtual_pitch
 ///   effective_rate  = virtual_rate  * virtual_pitch
 ///
-/// Pipeline: input -> deinterleave -> [PhaseVocoder per channel] -> [SincResampler per channel] -> interleave -> output
+/// Pipeline: input -> deinterleave -> [PhaseVocoder per channel] -> [SincResampler per channel] -> interleave -> AGC -> output
 pub struct PitchShifter {
     pv_left: PhaseVocoder,
     pv_right: PhaseVocoder,
     rs_left: SincResampler,
     rs_right: SincResampler,
+    agc: Agc,
 
     virtual_pitch: f32,
     virtual_rate: f32,
     virtual_tempo: f32,
 
-    effective_stretch: f32, // PV time-stretch ratio (synthesis_hop / analysis_hop)
-    effective_resample: f32, // resampler ratio (input_rate / output_rate for the resampler)
+    effective_stretch: f32,
+    effective_resample: f32,
 
-    // Intermediate mono buffers (preallocated)
     mono_left: Vec<f32>,
     mono_right: Vec<f32>,
     pv_out_buf: Vec<f32>,
     rs_out_buf: Vec<f32>,
     rs_right_buf: Vec<f32>,
 
-    // Output interleaved FIFO
     output_buf: Vec<f32>,
     output_len: usize,
     output_read: usize,
 }
 
 impl PitchShifter {
-    pub fn new(_sample_rate: f32) -> Self {
+    pub fn new(sample_rate: f32) -> Self {
         let mut s = Self {
             pv_left: PhaseVocoder::new(FFT_SIZE, ANALYSIS_HOP),
             pv_right: PhaseVocoder::new(FFT_SIZE, ANALYSIS_HOP),
             rs_left: SincResampler::new(),
             rs_right: SincResampler::new(),
+            agc: Agc::new(sample_rate),
             virtual_pitch: 1.0,
             virtual_rate: 1.0,
             virtual_tempo: 1.0,
@@ -87,6 +88,10 @@ impl PitchShifter {
     pub fn set_pitch(&mut self, pitch: f32) {
         self.virtual_pitch = pitch;
         self.update_parameters();
+    }
+
+    pub fn set_agc_enabled(&mut self, enabled: bool) {
+        self.agc.set_enabled(enabled);
     }
 
     /// Feed interleaved stereo samples.
@@ -190,11 +195,17 @@ impl PitchShifter {
                 self.output_buf.resize(needed + 1024, 0.0);
             }
 
+            let write_start = self.output_len;
             for i in 0..frames {
                 self.output_buf[self.output_len] = self.rs_out_buf[i];
                 self.output_buf[self.output_len + 1] = self.rs_right_buf[i];
                 self.output_len += CHANNELS;
             }
+
+            self.agc.process_interleaved(
+                &mut self.output_buf[write_start..self.output_len],
+                frames,
+            );
         }
     }
 

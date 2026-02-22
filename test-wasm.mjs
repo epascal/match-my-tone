@@ -666,6 +666,140 @@ console.log('\n17. Crackling / glitch detection (chirp 200-2000 Hz)');
   }
 }
 
+// ---- Test 18: AGC export exists ----
+console.log('\n18. AGC FFI export');
+{
+  assert('soundtouch_set_agc' in exports, 'export "soundtouch_set_agc" exists');
+}
+
+// ---- Test 19: AGC levels out variable-amplitude signal ----
+console.log('\n19. AGC dynamic normalization');
+{
+  const handle = exports.soundtouch_new(SAMPLE_RATE);
+  exports.soundtouch_set_pitch(handle, 1.0);
+  exports.soundtouch_set_agc(handle, 1); // enable AGC
+
+  // Build a signal: 0.5s loud (amp=0.8), then 0.5s quiet (amp=0.05)
+  const sectionFrames = Math.floor(SAMPLE_RATE * 0.5);
+  const numFrames = sectionFrames * 2;
+  const input = new Float32Array(numFrames * CHANNELS);
+  const freq = 440;
+  for (let i = 0; i < numFrames; i++) {
+    const amp = i < sectionFrames ? 0.8 : 0.05;
+    const s = amp * Math.sin(2 * Math.PI * freq * i / SAMPLE_RATE);
+    input[i * 2] = s;
+    input[i * 2 + 1] = s;
+  }
+
+  const output = processAudio(exports, handle, input, numFrames);
+  const totalFrames = output.length / CHANNELS;
+  exports.soundtouch_free(handle);
+
+  assert(totalFrames > numFrames * 0.5, `AGC produces enough output (${totalFrames} frames)`);
+
+  // Measure RMS in two regions well past the transients
+  // After PV latency (~8k frames) the loud section starts; quiet section starts at
+  // ~sectionFrames offset from that.
+  const skipStart = 10000;
+  const measureLen = 8192;
+
+  // Loud section RMS
+  const loudStart = skipStart;
+  if (totalFrames > loudStart + measureLen) {
+    let loudSum = 0;
+    for (let i = loudStart; i < loudStart + measureLen; i++) {
+      const v = output[i * CHANNELS];
+      loudSum += v * v;
+    }
+    const loudRms = Math.sqrt(loudSum / measureLen);
+
+    // Quiet section RMS (offset by sectionFrames from loud)
+    const quietStart = loudStart + sectionFrames;
+    if (totalFrames > quietStart + measureLen) {
+      let quietSum = 0;
+      for (let i = quietStart; i < quietStart + measureLen; i++) {
+        const v = output[i * CHANNELS];
+        quietSum += v * v;
+      }
+      const quietRms = Math.sqrt(quietSum / measureLen);
+
+      // Without AGC the ratio would be 0.8/0.05 = 16. With AGC it should be much closer.
+      const ratio = loudRms / Math.max(quietRms, 1e-10);
+      assert(ratio < 8, `AGC compresses loud/quiet ratio: ${ratio.toFixed(2)} (limit 8, without AGC ~16)`);
+      assert(quietRms > 0.01, `AGC boosts quiet section: RMS=${quietRms.toFixed(4)} (should be > 0.01)`);
+    } else {
+      assert(false, 'AGC: not enough output for quiet section analysis');
+    }
+  } else {
+    assert(false, 'AGC: not enough output for loud section analysis');
+  }
+}
+
+// ---- Test 20: AGC does not affect pitch ----
+console.log('\n20. AGC does not affect pitch');
+{
+  const handle = exports.soundtouch_new(SAMPLE_RATE);
+  const semitones = 3;
+  const pitchRatio = Math.pow(2, semitones / 12);
+  exports.soundtouch_set_pitch(handle, pitchRatio);
+  exports.soundtouch_set_agc(handle, 1);
+
+  const inputFreq = 440;
+  const expectedFreq = inputFreq * pitchRatio;
+  const numFrames = 32768;
+  const input = generateSine(numFrames, inputFreq, SAMPLE_RATE);
+  const output = processAudio(exports, handle, input, numFrames);
+  const totalFrames = output.length / CHANNELS;
+  exports.soundtouch_free(handle);
+
+  const skipFrames = 4096;
+  const fftSize = 8192;
+  if (totalFrames > skipFrames + fftSize) {
+    const mono = extractLeft(output.subarray(skipFrames * CHANNELS), fftSize);
+    const peakHz = findPeakFrequency(mono, SAMPLE_RATE, fftSize);
+    const tolerance = expectedFreq * 0.04;
+    assertApprox(peakHz, expectedFreq, tolerance,
+      `AGC+pitch: peak=${peakHz.toFixed(1)} Hz, expected=${expectedFreq.toFixed(1)} Hz`);
+  } else {
+    assert(false, 'AGC+pitch: not enough output for FFT');
+  }
+}
+
+// ---- Test 21: AGC disabled has no effect ----
+console.log('\n21. AGC disabled is transparent');
+{
+  const numFrames = 32768;
+  const inputFreq = 440;
+  const input = generateSine(numFrames, inputFreq, SAMPLE_RATE);
+
+  // Process without AGC
+  const h1 = exports.soundtouch_new(SAMPLE_RATE);
+  exports.soundtouch_set_pitch(h1, 1.0);
+  exports.soundtouch_set_agc(h1, 0);
+  const outOff = processAudio(exports, h1, input, numFrames);
+  exports.soundtouch_free(h1);
+
+  // Process with AGC enabled then disabled (should behave as off)
+  const h2 = exports.soundtouch_new(SAMPLE_RATE);
+  exports.soundtouch_set_pitch(h2, 1.0);
+  exports.soundtouch_set_agc(h2, 1);
+  exports.soundtouch_set_agc(h2, 0);
+  const outToggle = processAudio(exports, h2, input, numFrames);
+  exports.soundtouch_free(h2);
+
+  const minLen = Math.min(outOff.length, outToggle.length);
+  if (minLen > 4096) {
+    let maxDiff = 0;
+    for (let i = 0; i < minLen; i++) {
+      const d = Math.abs(outOff[i] - outToggle[i]);
+      if (d > maxDiff) maxDiff = d;
+    }
+    assert(maxDiff < 0.001, `AGC disabled is transparent: max diff=${maxDiff.toFixed(6)}`);
+  } else {
+    assert(false, 'AGC transparency: not enough output');
+  }
+}
+
 /**
  * Comprehensive crackling test:
  *   A) Sample-to-sample click detection (derivative outliers)

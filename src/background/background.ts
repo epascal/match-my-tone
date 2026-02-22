@@ -13,9 +13,10 @@ import type { RawAudioParams } from '../types/messages';
  * Default parameters for a new tab
  */
 const DEFAULT_PARAMS: RawAudioParams = {
-  hz: 440.0,           // Base frequency (A4)
-  semitons: 0,         // Semitone offset
-  isEnabled: false     // Enabled/disabled state
+  hz: 440.0,
+  semitons: 0,
+  isEnabled: false,
+  agcEnabled: false,
 };
 
 /**
@@ -47,7 +48,7 @@ type UpdateParamsMessage = {
   params: RawAudioParams;
 };
 type GetCurrentTabParamsMessage = { type: 'getCurrentTabParams' };
-type ParamsUpdateMessage = { type: 'paramsUpdate'; params: { pitch: number; isEnabled: boolean } };
+type ParamsUpdateMessage = { type: 'paramsUpdate'; params: { pitch: number; isEnabled: boolean; agcEnabled: boolean } };
 
 type IncomingMessage = GetParamsMessage | UpdateParamsMessage | GetCurrentTabParamsMessage;
 
@@ -127,6 +128,9 @@ class PitchShifterBackground {
     if (typeof stored.hz === 'number' && Number.isFinite(stored.hz) && stored.hz > 0) {
       params.hz = stored.hz;
     }
+    if (typeof stored.agcEnabled === 'boolean') {
+      params.agcEnabled = stored.agcEnabled;
+    }
     
     return Object.keys(params).length > 0 ? params : null;
   }
@@ -139,6 +143,7 @@ class PitchShifterBackground {
         isEnabled: params.isEnabled,
         semitons: params.semitons,
         hz: params.hz,
+        agcEnabled: params.agcEnabled,
       },
     });
   }
@@ -159,6 +164,7 @@ class PitchShifterBackground {
       params: {
         pitch: calculatePitchSemitones(params.semitons, params.hz),
         isEnabled: params.isEnabled,
+        agcEnabled: params.agcEnabled,
       },
     };
 
@@ -225,7 +231,7 @@ class PitchShifterBackground {
       const u = message as { tabId?: unknown; params?: unknown; host?: unknown };
       if (typeof u.tabId !== 'number') return null;
       if (!u.params || typeof u.params !== 'object') return null;
-      const p = u.params as { hz?: unknown; semitons?: unknown; isEnabled?: unknown };
+      const p = u.params as { hz?: unknown; semitons?: unknown; isEnabled?: unknown; agcEnabled?: unknown };
       if (typeof p.hz !== 'number' || typeof p.semitons !== 'number' || typeof p.isEnabled !== 'boolean') {
         return null;
       }
@@ -233,7 +239,12 @@ class PitchShifterBackground {
         type: 'updateParams',
         tabId: u.tabId,
         host: typeof u.host === 'string' || u.host === null ? (u.host as string | null) : undefined,
-        params: { hz: p.hz, semitons: p.semitons, isEnabled: p.isEnabled },
+        params: {
+          hz: p.hz,
+          semitons: p.semitons,
+          isEnabled: p.isEnabled,
+          agcEnabled: typeof p.agcEnabled === 'boolean' ? p.agcEnabled : false,
+        },
       };
     }
     return null;

@@ -53,6 +53,7 @@ interface WasmExports {
   soundtouch_process(ptr: number): void;
   soundtouch_receive_samples(ptr: number, outputPtr: number, maxFrames: number): number;
   soundtouch_clear(ptr: number): void;
+  soundtouch_set_agc(ptr: number, enabled: number): void;
 }
 
 class WasmSoundTouch {
@@ -132,6 +133,10 @@ class WasmSoundTouch {
 
   setPitch(pitch: number): void {
     this.exports!.soundtouch_set_pitch(this.handle, pitch);
+  }
+
+  setAgc(enabled: boolean): void {
+    this.exports!.soundtouch_set_agc(this.handle, enabled ? 1 : 0);
   }
 
   processQuantum(
@@ -296,7 +301,7 @@ class WasmSoundTouch {
 // AudioWorkletProcessor
 // ------------------------------------------------------------
 
-type WorkletParams = Record<'rate' | 'tempo' | 'pitch' | 'pitchSemitones', Float32Array>;
+type WorkletParams = Record<'rate' | 'tempo' | 'pitch' | 'pitchSemitones' | 'agcEnabled', Float32Array>;
 
 function paramValue(params: WorkletParams, name: keyof WorkletParams, fallback: number): number {
   const arr = params[name];
@@ -344,12 +349,14 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
     const tempo = paramValue(parameters, 'tempo', 1.0);
     const pitch = paramValue(parameters, 'pitch', 1.0);
     const pitchSemitones = paramValue(parameters, 'pitchSemitones', 0);
+    const agcEnabled = paramValue(parameters, 'agcEnabled', 0);
     const effectivePitch = pitch * Math.pow(2, pitchSemitones / 12);
 
     try {
       this.wasmPipe.setRate(rate);
       this.wasmPipe.setTempo(tempo);
       this.wasmPipe.setPitch(effectivePitch);
+      this.wasmPipe.setAgc(agcEnabled > 0.5);
       this.wasmPipe.processQuantum(leftIn, rightIn, leftOut, rightOut);
     } catch {
       leftOut.set(leftIn);
@@ -365,6 +372,7 @@ class SoundTouchProcessor extends AudioWorkletProcessor {
       { name: 'tempo', defaultValue: 1.0, minValue: 0.25, maxValue: 4.0 },
       { name: 'pitch', defaultValue: 1.0, minValue: 0.25, maxValue: 4.0 },
       { name: 'pitchSemitones', defaultValue: 0, minValue: -24, maxValue: 24 },
+      { name: 'agcEnabled', defaultValue: 0, minValue: 0, maxValue: 1 },
     ];
   }
 }

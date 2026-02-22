@@ -21,7 +21,7 @@ pub struct SincResampler {
 
 impl SincResampler {
     pub fn new() -> Self {
-        let mut buf = vec![0.0f32; 4096];
+        let buf = vec![0.0f32; 4096];
         let _ = &buf[..ZERO_CROSSINGS]; // zero-padded prefix
         Self {
             ratio: 1.0,

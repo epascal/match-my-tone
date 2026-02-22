@@ -24,6 +24,8 @@ export interface GlobalAudioParams {
   pitch: number;
   /** Enabled/disabled state */
   isEnabled: boolean;
+  /** Automatic Gain Control on/off */
+  agcEnabled: boolean;
 }
 
 /**

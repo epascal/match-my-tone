@@ -1,4 +1,6 @@
+mod agc;
 mod fft;
+#[allow(dead_code)]
 mod fifo_buffer;
 mod phase_vocoder;
 mod pitch_shifter;
@@ -84,4 +86,10 @@ pub extern "C" fn soundtouch_receive_samples(ptr: *mut PitchShifter, output_ptr:
 pub extern "C" fn soundtouch_clear(ptr: *mut PitchShifter) {
     let ps = unsafe { &mut *ptr };
     ps.clear();
+}
+
+#[no_mangle]
+pub extern "C" fn soundtouch_set_agc(ptr: *mut PitchShifter, enabled: u32) {
+    let ps = unsafe { &mut *ptr };
+    ps.set_agc_enabled(enabled != 0);
 }

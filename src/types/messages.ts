@@ -22,6 +22,8 @@ export interface RawAudioParams {
   semitons: number;
   /** Enabled/disabled state */
   isEnabled: boolean;
+  /** Automatic Gain Control on/off */
+  agcEnabled: boolean;
 }
 
 /**
@@ -32,6 +34,8 @@ export interface CalculatedAudioParams {
   pitch: number;
   /** Enabled/disabled state */
   isEnabled: boolean;
+  /** Automatic Gain Control on/off */
+  agcEnabled: boolean;
 }
 
 /**

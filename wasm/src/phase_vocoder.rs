@@ -119,13 +119,42 @@ impl PhaseVocoder {
         self.input_write_pos += samples.len();
     }
 
-    pub fn process(&mut self) {
-        while self.frames_until_next_analysis + self.fft_size <= self.input_write_pos {
-            self.analyze_and_synthesize(self.frames_until_next_analysis);
-            self.frames_until_next_analysis += self.analysis_hop;
-        }
+    pub fn can_process_frame(&self) -> bool {
+        self.frames_until_next_analysis + self.fft_size <= self.input_write_pos
+    }
+
+    pub fn process_one_frame(&mut self) {
+        if !self.can_process_frame() { return; }
+        let rs = self.frames_until_next_analysis;
+        self.analyze_frame(rs);
+        self.update_phase_master();
+        self.synthesize_frame();
+        self.frames_until_next_analysis += self.analysis_hop;
+    }
+
+    /// Process one frame using another channel's phases as reference,
+    /// preserving the inter-channel phase difference (stereo image).
+    pub fn process_one_frame_locked(&mut self, ref_synth: &[f32], ref_analysis: &[f32]) {
+        if !self.can_process_frame() { return; }
+        let rs = self.frames_until_next_analysis;
+        self.analyze_frame(rs);
+        self.update_phase_locked(ref_synth, ref_analysis);
+        self.synthesize_frame();
+        self.frames_until_next_analysis += self.analysis_hop;
+    }
+
+    pub fn finish_processing(&mut self) {
         self.compact_input();
     }
+
+    pub fn synthesis_phases(&self) -> &[f32] {
+        &self.synthesis_phase
+    }
+
+    pub fn analysis_phases(&self) -> &[f32] {
+        &self.analysis_phase
+    }
+
 
     pub fn output_available(&self) -> usize {
         self.output_accum_len.saturating_sub(self.output_read_pos)
@@ -142,7 +171,7 @@ impl PhaseVocoder {
         avail
     }
 
-    fn analyze_and_synthesize(&mut self, read_start: usize) {
+    fn analyze_frame(&mut self, read_start: usize) {
         let n = self.fft_size;
         let half = n / 2 + 1;
 
@@ -158,6 +187,10 @@ impl PhaseVocoder {
             self.magnitude[k] = (re * re + im * im).sqrt();
             self.analysis_phase[k] = im.atan2(re);
         }
+    }
+
+    fn update_phase_master(&mut self) {
+        let half = self.fft_size / 2 + 1;
 
         if self.first_frame {
             self.synthesis_phase.copy_from_slice(&self.analysis_phase);
@@ -165,7 +198,7 @@ impl PhaseVocoder {
         } else {
             let ha = self.analysis_hop as f32;
             let hs = self.synthesis_hop as f32;
-            let expected_phase_advance_per_bin = TWO_PI * ha / n as f32;
+            let expected_phase_advance_per_bin = TWO_PI * ha / self.fft_size as f32;
 
             self.detect_peaks(half);
             self.prev_synth_phase.copy_from_slice(&self.synthesis_phase);
@@ -186,6 +219,24 @@ impl PhaseVocoder {
         }
 
         self.prev_analysis_phase.copy_from_slice(&self.analysis_phase);
+    }
+
+    /// Preserve inter-channel phase difference: synth_R[k] = synth_L[k] + (analysis_R[k] - analysis_L[k])
+    fn update_phase_locked(&mut self, ref_synth: &[f32], ref_analysis: &[f32]) {
+        let half = self.fft_size / 2 + 1;
+
+        for k in 0..half {
+            let delta = self.analysis_phase[k] - ref_analysis[k];
+            self.synthesis_phase[k] = wrap_phase(ref_synth[k] + delta);
+        }
+
+        self.prev_analysis_phase.copy_from_slice(&self.analysis_phase);
+        self.first_frame = false;
+    }
+
+    fn synthesize_frame(&mut self) {
+        let n = self.fft_size;
+        let half = n / 2 + 1;
 
         for k in 0..half {
             let mag = self.magnitude[k];
@@ -200,8 +251,6 @@ impl PhaseVocoder {
 
         self.fft.inverse(&mut self.frame_re, &mut self.frame_im);
 
-        // Overlap-add with synthesis window + per-sample COLA normalization.
-        // norm_array[r] = 1/∑_k w²(r + k*Hs), cycled with period Hs.
         let synth_hop = self.synthesis_hop;
         let write_start = self.output_accum_len;
         let needed = write_start + n;

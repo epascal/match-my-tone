@@ -113,15 +113,22 @@ impl PitchShifter {
     }
 
     /// Run the processing pipeline.
+    /// Left channel is the phase reference; right channel preserves the
+    /// inter-channel phase difference so the stereo image stays stable.
     pub fn process(&mut self) {
-        self.pv_left.process();
-        self.pv_right.process();
+        while self.pv_left.can_process_frame() && self.pv_right.can_process_frame() {
+            self.pv_left.process_one_frame();
+            self.pv_right.process_one_frame_locked(
+                self.pv_left.synthesis_phases(),
+                self.pv_left.analysis_phases(),
+            );
+        }
+        self.pv_left.finish_processing();
+        self.pv_right.finish_processing();
 
-        // Drain PV output into resampler
         self.drain_pv_to_resampler(&mut PvChannel::Left);
         self.drain_pv_to_resampler(&mut PvChannel::Right);
 
-        // Drain resampler output into interleaved output buffer
         self.drain_resamplers_to_output();
     }
 

@@ -1,7 +1,8 @@
 /// Automatic Gain Control (AGC) for stereo interleaved audio.
 ///
 /// Tracks the signal envelope with asymmetric attack/release and applies
-/// a smoothed gain to bring the output toward a target RMS level.
+/// a smoothed gain to bring the output toward a target peak level.
+/// A per-sample limiter guarantees output never exceeds ±1.0.
 /// Does not affect pitch.
 pub struct Agc {
     enabled: bool,
@@ -70,8 +71,15 @@ impl Agc {
 
             self.current_gain += self.gain_smooth_coeff * (desired_gain - self.current_gain);
 
-            buf[i * 2] = l * self.current_gain;
-            buf[i * 2 + 1] = r * self.current_gain;
+            // Per-sample limiter: cap gain so output never exceeds ±1.0
+            let safe_gain = if peak > 1e-6 {
+                self.current_gain.min(1.0 / peak)
+            } else {
+                self.current_gain
+            };
+
+            buf[i * 2] = l * safe_gain;
+            buf[i * 2 + 1] = r * safe_gain;
         }
     }
 }

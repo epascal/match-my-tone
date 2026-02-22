@@ -21,12 +21,12 @@ impl Agc {
             enabled: false,
             env_level: 0.0,
             current_gain: 1.0,
-            target_level: 0.15,
+            target_level: 0.7,
             attack_coeff: 1.0 - (-1.0 / (sample_rate * 0.005)).exp(),
             release_coeff: 1.0 - (-1.0 / (sample_rate * 0.300)).exp(),
             gain_smooth_coeff: 1.0 - (-1.0 / (sample_rate * 0.050)).exp(),
-            max_gain: 8.0,
-            min_gain: 0.1,
+            max_gain: 4.0,
+            min_gain: 0.25,
         }
     }
 

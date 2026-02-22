@@ -6,98 +6,99 @@
 /**
  * Message types exchanged between components
  */
-export type MessageType = 
-  | 'getParams'           // Content script requests parameters
-  | 'paramsUpdate'         // Background sends a parameter update
-  | 'updateParams'        // Popup updates parameters
-  | 'getCurrentTabParams'; // Popup requests current tab parameters
+export type MessageType =
+  | "getParams" |           // Content script requests parameters
+  "paramsUpdate" |         // Background sends a parameter update
+  "updateParams" |        // Popup updates parameters
+  "getCurrentTabParams"; // Popup requests current tab parameters
 
 /**
  * Raw audio parameters (before pitch calculation)
  */
 export interface RawAudioParams {
-  /** Base frequency in Hz (default 440 = A4) */
-  hz: number;
-  /** Semitone offset */
-  semitons: number;
-  /** Enabled/disabled state */
-  isEnabled: boolean;
-  /** Automatic Gain Control on/off */
-  agcEnabled: boolean;
+
+    /** Base frequency in Hz (default 440 = A4) */
+    "hz": number;
+
+    /** Semitone offset */
+    "semitons": number;
+
+    /** Enabled/disabled state */
+    "isEnabled": boolean;
+
+    /** Automatic Gain Control on/off */
+    "agcEnabled": boolean;
 }
 
 /**
  * Calculated audio parameters (after pitch conversion)
  */
 export interface CalculatedAudioParams {
-  /** Pitch in semitones (includes base frequency calculation) */
-  pitch: number;
-  /** Enabled/disabled state */
-  isEnabled: boolean;
-  /** Automatic Gain Control on/off */
-  agcEnabled: boolean;
+
+    /** Pitch in semitones (includes base frequency calculation) */
+    "pitch": number;
+
+    /** Enabled/disabled state */
+    "isEnabled": boolean;
+
+    /** Automatic Gain Control on/off */
+    "agcEnabled": boolean;
 }
 
 /**
  * Parameter request message (content script -> background)
  */
-export interface GetParamsMessage {
-  type: 'getParams';
-}
+export interface GetParamsMessage { "type": "getParams" }
 
 /**
  * Parameter update message (background -> content script)
  */
 export interface ParamsUpdateMessage {
-  type: 'paramsUpdate';
-  params: CalculatedAudioParams;
+    "type":   "paramsUpdate";
+    "params": CalculatedAudioParams;
 }
 
 /**
  * Update message from popup (popup -> background)
  */
 export interface UpdateParamsMessage {
-  type: 'updateParams';
-  tabId: number;
-  params: RawAudioParams;
+    "type":   "updateParams";
+    "tabId":  number;
+    "params": RawAudioParams;
 }
 
 /**
  * Current tab parameter request message (popup -> background)
  */
-export interface GetCurrentTabParamsMessage {
-  type: 'getCurrentTabParams';
-}
+export interface GetCurrentTabParamsMessage { "type": "getCurrentTabParams" }
 
 /**
  * Success response
  */
-export interface SuccessResponse {
-  success: true;
-}
+export interface SuccessResponse { "success": true }
 
 /**
  * Error response
  */
 export interface ErrorResponse {
-  success: false;
-  error: string;
+    "success": false;
+    "error":   string;
 }
 
 /**
  * Union of all message types
  */
-export type Message = 
-  | GetParamsMessage
-  | ParamsUpdateMessage
-  | UpdateParamsMessage
-  | GetCurrentTabParamsMessage;
+export type Message =
+  | GetParamsMessage |
+  ParamsUpdateMessage |
+  UpdateParamsMessage |
+  GetCurrentTabParamsMessage;
 
 /**
  * Union of all responses
  */
-export type MessageResponse = 
-  | RawAudioParams
-  | CalculatedAudioParams
-  | SuccessResponse
-  | ErrorResponse;
+export type MessageResponse =
+  | RawAudioParams |
+  CalculatedAudioParams |
+  SuccessResponse |
+  ErrorResponse;

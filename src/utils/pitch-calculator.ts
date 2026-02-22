@@ -19,13 +19,15 @@ const BASE_HZ = 440.0;
  * // For A#4 (466.16Hz) with 0 semitones
  * calculatePitch(0, 466.16) // => ~1.0 (approximately 1 semitone above A4)
  */
-export function calculatePitch(semitons: number, hz: number): number {
-  // Convert frequency difference to semitones
-  // Formula: semitones = 12 * log2(freq / baseFreq)
-  const hzInSemitones = 12 * Math.log2(hz / BASE_HZ);
-  
-  // Add manual semitone offset
-  return semitons + hzInSemitones;
+export function calculatePitch( semitons: number, hz: number ): number {
+    /*
+     * Convert frequency difference to semitones
+     * Formula: semitones = 12 * log2(freq / baseFreq)
+     */
+    const hzInSemitones = 12 * Math.log2( hz / BASE_HZ );
+
+    // Add manual semitone offset
+    return semitons + hzInSemitones;
 }
 
 /**
@@ -38,8 +40,8 @@ export function calculatePitch(semitons: number, hz: number): number {
  * semitonesToRatio(12) // => 2.0 (one octave higher)
  * semitonesToRatio(-12) // => 0.5 (one octave lower)
  */
-export function semitonesToRatio(semitones: number): number {
-  return Math.pow(2, semitones / 12);
+export function semitonesToRatio( semitones: number ): number {
+    return Math.pow( 2, semitones / 12 );
 }
 
 /**
@@ -52,6 +54,6 @@ export function semitonesToRatio(semitones: number): number {
  * ratioToSemitones(2.0) // => 12 (one octave)
  * ratioToSemitones(0.5) // => -12 (one octave lower)
  */
-export function ratioToSemitones(ratio: number): number {
-  return 12 * Math.log2(ratio);
+export function ratioToSemitones( ratio: number ): number {
+    return 12 * Math.log2( ratio );
 }

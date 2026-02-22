@@ -117,14 +117,14 @@ impl SincResampler {
 }
 
 fn build_sinc_table() -> Vec<f32> {
-    let mut table = vec![0.0f32; TABLE_LEN];
-    for i in 0..TABLE_LEN {
-        let x = i as f32 / TABLE_STEPS_PER_CROSSING as f32;
-        let sinc = if x < 1e-6 { 1.0 } else { (PI * x).sin() / (PI * x) };
-        let window = kaiser(x / ZERO_CROSSINGS as f32, KAISER_BETA);
-        table[i] = sinc * window;
-    }
-    table
+    (0..TABLE_LEN)
+        .map(|i| {
+            let x = i as f32 / TABLE_STEPS_PER_CROSSING as f32;
+            let sinc = if x < 1e-6 { 1.0 } else { (PI * x).sin() / (PI * x) };
+            let window = kaiser(x / ZERO_CROSSINGS as f32, KAISER_BETA);
+            sinc * window
+        })
+        .collect()
 }
 
 fn kaiser(x: f32, beta: f32) -> f32 {

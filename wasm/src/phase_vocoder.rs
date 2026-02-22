@@ -52,10 +52,9 @@ impl PhaseVocoder {
         debug_assert!(analysis_hop > 0 && analysis_hop <= fft_size);
 
         let half = fft_size / 2 + 1;
-        let mut window = vec![0.0f32; fft_size];
-        for i in 0..fft_size {
-            window[i] = 0.5 * (1.0 - (TWO_PI * i as f32 / fft_size as f32).cos());
-        }
+        let window: Vec<f32> = (0..fft_size)
+            .map(|i| 0.5 * (1.0 - (TWO_PI * i as f32 / fft_size as f32).cos()))
+            .collect();
 
         let norm_array = compute_norm_array(&window, analysis_hop);
         let output_capacity = fft_size * 4;
@@ -129,11 +128,7 @@ impl PhaseVocoder {
     }
 
     pub fn output_available(&self) -> usize {
-        if self.output_accum_len > self.output_read_pos {
-            self.output_accum_len - self.output_read_pos
-        } else {
-            0
-        }
+        self.output_accum_len.saturating_sub(self.output_read_pos)
     }
 
     pub fn read_output(&mut self, dest: &mut [f32], max: usize) -> usize {
@@ -274,11 +269,7 @@ impl PhaseVocoder {
     }
 
     fn compact_input(&mut self) {
-        let consumed = if self.frames_until_next_analysis > self.fft_size {
-            self.frames_until_next_analysis - self.fft_size
-        } else {
-            0
-        };
+        let consumed = self.frames_until_next_analysis.saturating_sub(self.fft_size);
         if consumed > 0 && consumed <= self.input_write_pos {
             self.input_buf.copy_within(consumed..self.input_write_pos, 0);
             self.input_write_pos -= consumed;
@@ -310,18 +301,18 @@ impl PhaseVocoder {
 /// Uses f64 accumulation to minimize rounding error.
 fn compute_norm_array(window: &[f32], synth_hop: usize) -> Vec<f32> {
     let n = window.len();
-    let mut norm = vec![0.0f32; synth_hop];
-    for r in 0..synth_hop {
-        let mut sum = 0.0f64;
-        let mut idx = r;
-        while idx < n {
-            let w = window[idx] as f64;
-            sum += w * w;
-            idx += synth_hop;
-        }
-        norm[r] = if sum > 1e-10 { (1.0 / sum) as f32 } else { 0.0 };
-    }
-    norm
+    (0..synth_hop)
+        .map(|r| {
+            let mut sum = 0.0f64;
+            let mut idx = r;
+            while idx < n {
+                let w = window[idx] as f64;
+                sum += w * w;
+                idx += synth_hop;
+            }
+            if sum > 1e-10 { (1.0 / sum) as f32 } else { 0.0 }
+        })
+        .collect()
 }
 
 #[inline]

@@ -1,8 +1,6 @@
 // eslint.config.js
 import js from "@eslint/js";
 import stylistic from "@stylistic/eslint-plugin";
-import react from "eslint-plugin-react";
-import reactHooks from "eslint-plugin-react-hooks";
 import globals from "globals";
 import { dirname } from "path";
 import tseslint from "typescript-eslint";
@@ -15,7 +13,6 @@ export default [
             "**/node_modules/**",
             "**/dist/**",
             "**/build/**",
-            "**/.next/**",
             "**/coverage/**",
             "**/*.min.js",
         ],
@@ -24,37 +21,8 @@ export default [
     // Base JS
     js.configs.recommended,
 
-    // TypeScript (type-aware “raisonnable”)
+    // TypeScript (type-aware "raisonnable")
     ...tseslint.configs.recommendedTypeChecked,
-
-    // React (≈ plugin:react/recommended)
-    {
-        "name":    "react",
-        "plugins": { react },
-        "rules":   {
-            ...react.configs.recommended.rules,
-            "react/react-in-jsx-scope": "off",
-            "react/prop-types":         "off",
-        },
-        "settings": { "react": { "version": "18.2.0" } },
-    },
-
-    // React Hooks (déplier au niveau racine)
-    reactHooks.configs.flat.recommended,
-
-    // ...reactHooks.configs['recommended-latest'], // optionnel si tu préfères
-
-    // Overrides Hooks (exhaustive-deps à "error")
-    {
-        "name":  "react-hooks-overrides",
-        "rules": {
-            "react-hooks/rules-of-hooks":  "error",
-            "react-hooks/exhaustive-deps": [
-                "error",
-                { "additionalHooks": "" }, // ajoute tes hooks custom ici si besoin
-            ],
-        },
-    },
 
     // Projet : options langage + style & règles perso
     {
@@ -94,7 +62,7 @@ export default [
         },
     },
 
-    // Désactiver l’analyse type-aware pour .js si présent
+    // Désactiver l'analyse type-aware pour .js si présent
     {
         "files": [ "**/*.js", "**/*.cjs", "**/*.mjs" ],
         ...tseslint.configs.disableTypeChecked,
@@ -137,29 +105,10 @@ export default [
                 4,
                 {
                     "SwitchCase":   1,
-                    "ignoredNodes": [ "JSXElement *", "JSXElement", "TSXElement *", "TSXElement", "JSXFragment" ],
+                    "ignoredNodes": [],
                 },
             ],
             "@stylistic/indent-binary-ops":            "error",
-            "@stylistic/jsx-child-element-spacing":    "error",
-            "@stylistic/jsx-closing-bracket-location": "error",
-            "@stylistic/jsx-closing-tag-location":     "error",
-            "@stylistic/jsx-curly-brace-presence":     "error",
-            "@stylistic/jsx-curly-newline":            "error",
-            "@stylistic/jsx-curly-spacing":            "error",
-            "@stylistic/jsx-equals-spacing":           "error",
-            "@stylistic/jsx-first-prop-new-line":      "error",
-            "@stylistic/jsx-function-call-newline":    "error",
-            "@stylistic/jsx-indent-props":             "error",
-            "@stylistic/jsx-max-props-per-line":       "error",
-            "@stylistic/jsx-newline":                  [ "error", { "prevent": true } ],
-            "@stylistic/jsx-one-expression-per-line":  "error",
-            "@stylistic/jsx-pascal-case":              "error",
-            "@stylistic/jsx-quotes":                   "error",
-            "@stylistic/jsx-self-closing-comp":        "error",
-            "@stylistic/jsx-sort-props":               "error",
-            "@stylistic/jsx-tag-spacing":              "error",
-            "@stylistic/jsx-wrap-multilines":          "error",
             "@stylistic/key-spacing":                  [ "error", { "align": "value" } ],
             "@stylistic/keyword-spacing":              "error",
             "@stylistic/line-comment-position":        "off",
@@ -193,8 +142,6 @@ export default [
                 {
                     "nestedBinaryExpressions": false,
                     "returnAssign":            false,
-                    "ignoreJSX":               "all",
-                    "ignoredNodes":            [ "ArrowFunctionExpression[body.type=ConditionalExpression]" ],
                 },
             ],
             "@stylistic/no-extra-semi":                    "error",

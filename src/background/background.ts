@@ -7,16 +7,16 @@
  * - Pitch calculation from raw parameters
  */
 
-import type { RawAudioParams } from '../types/messages';
+import type { RawAudioParams } from "../types/messages";
 
 /**
  * Default parameters for a new tab
  */
 const DEFAULT_PARAMS: RawAudioParams = {
-  hz: 440.0,
-  semitons: 0,
-  isEnabled: false,
-  agcEnabled: false,
+    "hz":         440.0,
+    "semitons":   0,
+    "isEnabled":  false,
+    "agcEnabled": false,
 };
 
 /**
@@ -24,10 +24,11 @@ const DEFAULT_PARAMS: RawAudioParams = {
  * - a manual offset (semitones)
  * - a base frequency (hz) relative to A4 (440Hz)
  */
-function calculatePitchSemitones(semitons: number, hz: number): number {
-  const BASE_HZ = 440.0;
-  const hzInSemitones = 12 * Math.log2(hz / BASE_HZ);
-  return semitons + hzInSemitones;
+function calculatePitchSemitones( semitons: number, hz: number ): number {
+    const BASE_HZ = 440.0;
+    const hzInSemitones = 12 * Math.log2( hz / BASE_HZ );
+
+    return semitons + hzInSemitones;
 }
 
 /**
@@ -35,37 +36,51 @@ function calculatePitchSemitones(semitons: number, hz: number): number {
  * We only rely on the fields we need.
  */
 type MessageSenderLike = {
-  tab?: { id?: number };
-  url?: string;
+    "tab"?: { "id"?: number };
+    "url"?: string;
 };
 
-type GetParamsMessage = { type: 'getParams' };
+type GetParamsMessage = { "type": "getParams" };
+
 type UpdateParamsMessage = {
-  type: 'updateParams';
-  tabId: number;
-  /** hostname (optional) provided by popup */
-  host?: string | null;
-  params: RawAudioParams;
+    "type":  "updateParams";
+    "tabId": number;
+
+    /** hostname (optional) provided by popup */
+    "host"?:  string | null;
+    "params": RawAudioParams;
 };
-type GetCurrentTabParamsMessage = { type: 'getCurrentTabParams' };
-type ParamsUpdateMessage = { type: 'paramsUpdate'; params: { pitch: number; isEnabled: boolean; agcEnabled: boolean } };
+
+type GetCurrentTabParamsMessage = { "type": "getCurrentTabParams" };
+
+type ParamsUpdateMessage = {
+    "type":   "paramsUpdate";
+    "params": {
+        "pitch":      number;
+        "isEnabled":  boolean;
+        "agcEnabled": boolean;
+    };
+};
 
 type IncomingMessage = GetParamsMessage | UpdateParamsMessage | GetCurrentTabParamsMessage;
 
-const HOST_PARAMS_PREFIX = 'hostParams:';
+const HOST_PARAMS_PREFIX = "hostParams:";
 
-function storageKeyForHost(host: string): string {
-  return `${HOST_PARAMS_PREFIX}${host}`;
+function storageKeyForHost( host: string ): string {
+    return `${ HOST_PARAMS_PREFIX }${ host }`;
 }
 
-function tryParseHostname(url: string | undefined): string | null {
-  if (!url) return null;
-  try {
-    const u = new URL(url);
-    return u.hostname || null;
-  } catch {
-    return null;
-  }
+function tryParseHostname( url: string | undefined ): string | null {
+    if ( !url ) {
+        return null;
+    }
+    try {
+        const u = new URL( url );
+
+        return u.hostname || null;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -73,193 +88,252 @@ function tryParseHostname(url: string | undefined): string | null {
  * Goal: remain 100% compatible with MV2 (classic script, no runtime import/export).
  */
 class PitchShifterBackground {
-  /**
-   * Parameter storage per tab ID (Map = O(1))
-   */
-  private readonly tabParams = new Map<number, RawAudioParams>();
 
-  /**
-   * Cache (volatile) tabId -> hostname, useful when popup only sends tabId.
-   * Note: MV2 background is non-persistent, so this cache may disappear.
-   */
-  private readonly tabHost = new Map<number, string>();
+    /**
+     * Parameter storage per tab ID (Map = O(1))
+     */
+    private readonly tabParams = new Map<number, RawAudioParams>();
 
-  start(): void {
-    this.installMessageListener();
-    this.installTabCleanup();
-  }
+    /**
+     * Cache (volatile) tabId -> hostname, useful when popup only sends tabId.
+     * Note: MV2 background is non-persistent, so this cache may disappear.
+     */
+    private readonly tabHost = new Map<number, string>();
 
-  // ------------------------------------------------------------
-  // Per-tab storage
-  // ------------------------------------------------------------
+    start(): void {
+        this.installMessageListener();
+        this.installTabCleanup();
+    }
 
-  private async getOrInitTabParams(tabId: number, host: string | null): Promise<RawAudioParams> {
-    let params = this.tabParams.get(tabId);
-    if (!params) {
-      params = { ...DEFAULT_PARAMS };
-      // Apply stored parameters for this hostname, if available.
-      if (host) {
-        const stored = await this.getStoredParamsForHost(host);
-        if (stored) {
-          // Merge stored params with defaults (in case structure changed)
-          params = { ...DEFAULT_PARAMS, ...stored };
+    /*
+     * ------------------------------------------------------------
+     * Per-tab storage
+     * ------------------------------------------------------------
+     */
+
+    private async getOrInitTabParams( tabId: number, host: string | null ): Promise<RawAudioParams> {
+        let params = this.tabParams.get( tabId );
+        if ( !params ) {
+            params = { ...DEFAULT_PARAMS };
+
+            // Apply stored parameters for this hostname, if available.
+            if ( host ) {
+                const stored = await this.getStoredParamsForHost( host );
+                if ( stored ) {
+                    // Merge stored params with defaults (in case structure changed)
+                    params = {
+                        ...DEFAULT_PARAMS,
+                        ...stored,
+                    };
+                }
+            }
+            this.tabParams.set( tabId, params );
         }
-      }
-      this.tabParams.set(tabId, params);
+
+        return params;
     }
-    return params;
-  }
 
-  private async getStoredParamsForHost(host: string): Promise<Partial<RawAudioParams> | null> {
-    const key = storageKeyForHost(host);
-    const result = await browser.storage.local.get(key);
-    const value = (result as Record<string, unknown>)[key];
-    if (!value || typeof value !== 'object') return null;
-    
-    const stored = value as Partial<RawAudioParams>;
-    // Validate stored values
-    const params: Partial<RawAudioParams> = {};
-    if (typeof stored.isEnabled === 'boolean') {
-      params.isEnabled = stored.isEnabled;
-    }
-    if (typeof stored.semitons === 'number' && Number.isFinite(stored.semitons)) {
-      params.semitons = stored.semitons;
-    }
-    if (typeof stored.hz === 'number' && Number.isFinite(stored.hz) && stored.hz > 0) {
-      params.hz = stored.hz;
-    }
-    if (typeof stored.agcEnabled === 'boolean') {
-      params.agcEnabled = stored.agcEnabled;
-    }
-    
-    return Object.keys(params).length > 0 ? params : null;
-  }
-
-  private async setStoredParamsForHost(host: string, params: RawAudioParams): Promise<void> {
-    const key = storageKeyForHost(host);
-    // Store all parameters: isEnabled, semitones, and hz
-    await browser.storage.local.set({
-      [key]: {
-        isEnabled: params.isEnabled,
-        semitons: params.semitons,
-        hz: params.hz,
-        agcEnabled: params.agcEnabled,
-      },
-    });
-  }
-
-  private updateTabParams(tabId: number, patch: Partial<RawAudioParams>): void {
-    // Here, tabParams should already exist. If not (background wake-up),
-    // we initialize without host (it will be applied on next getParams).
-    let params = this.tabParams.get(tabId);
-    if (!params) {
-      params = { ...DEFAULT_PARAMS };
-      this.tabParams.set(tabId, params);
-    }
-    Object.assign(params, patch);
-
-    // Notify the tab's content script (if present)
-    const msg: ParamsUpdateMessage = {
-      type: 'paramsUpdate',
-      params: {
-        pitch: calculatePitchSemitones(params.semitons, params.hz),
-        isEnabled: params.isEnabled,
-        agcEnabled: params.agcEnabled,
-      },
-    };
-
-    // If content script is not yet injected, sendMessage fails: we ignore.
-    browser.tabs.sendMessage(tabId, msg).catch(() => undefined);
-  }
-
-  // ------------------------------------------------------------
-  // Messages
-  // ------------------------------------------------------------
-
-  private installMessageListener(): void {
-    browser.runtime.onMessage.addListener((message: unknown, sender: MessageSenderLike) => {
-      const msg = this.asIncomingMessage(message);
-      if (!msg) return;
-
-      if (msg.type === 'getParams') {
-        const tabId = sender.tab?.id;
-        if (typeof tabId === 'number') {
-          const host = tryParseHostname(sender.url);
-          if (host) this.tabHost.set(tabId, host);
-          return this.getOrInitTabParams(tabId, host ?? this.tabHost.get(tabId) ?? null);
+    private async getStoredParamsForHost( host: string ): Promise<Partial<RawAudioParams> | null> {
+        const key = storageKeyForHost( host );
+        const result = await browser.storage.local.get( key );
+        const value = ( result as Record<string, unknown> )[key];
+        if ( !value || typeof value !== "object" ) {
+            return null;
         }
-        return Promise.resolve(DEFAULT_PARAMS);
-      }
 
-      if (msg.type === 'updateParams') {
-        if (typeof msg.tabId === 'number') {
-          const host = typeof msg.host === 'string' && msg.host.length > 0 ? msg.host : this.tabHost.get(msg.tabId) ?? null;
-          if (host) {
-            this.tabHost.set(msg.tabId, host);
-            // Store all parameters (isEnabled, semitones, hz) per hostname
-            void this.setStoredParamsForHost(host, msg.params);
-          }
-          this.updateTabParams(msg.tabId, msg.params);
-          return Promise.resolve({ success: true as const });
+        const stored = value as Partial<RawAudioParams>;
+
+        // Validate stored values
+        const params: Partial<RawAudioParams> = {};
+        if ( typeof stored.isEnabled === "boolean" ) {
+            params.isEnabled = stored.isEnabled;
         }
-        return Promise.resolve({ success: false as const, error: 'No tab ID' });
-      }
+        if ( typeof stored.semitons === "number" && Number.isFinite( stored.semitons ) ) {
+            params.semitons = stored.semitons;
+        }
+        if ( typeof stored.hz === "number" && Number.isFinite( stored.hz ) && stored.hz > 0 ) {
+            params.hz = stored.hz;
+        }
+        if ( typeof stored.agcEnabled === "boolean" ) {
+            params.agcEnabled = stored.agcEnabled;
+        }
 
-      if (msg.type === 'getCurrentTabParams') {
-        return browser.tabs
-          .query({ active: true, currentWindow: true })
-          .then(async (tabs) => {
-            const tabId = tabs[0]?.id;
-            if (typeof tabId !== 'number') return DEFAULT_PARAMS;
+        return Object.keys( params ).length > 0 ? params : null;
+    }
 
-            // If URL is accessible (activeTab), we retrieve the hostname.
-            const host = tryParseHostname((tabs[0] as unknown as { url?: string })?.url);
-            if (host) this.tabHost.set(tabId, host);
+    private async setStoredParamsForHost( host: string, params: RawAudioParams ): Promise<void> {
+        const key = storageKeyForHost( host );
 
-            return await this.getOrInitTabParams(tabId, host ?? this.tabHost.get(tabId) ?? null);
-          });
-      }
-    });
-  }
+        // Store all parameters: isEnabled, semitones, and hz
+        await browser.storage.local.set( {
+            [key]: {
+                "isEnabled":  params.isEnabled,
+                "semitons":   params.semitons,
+                "hz":         params.hz,
+                "agcEnabled": params.agcEnabled,
+            },
+        } );
+    }
 
-  private asIncomingMessage(message: unknown): IncomingMessage | null {
-    if (!message || typeof message !== 'object') return null;
-    const m = message as { type?: unknown };
-    if (m.type === 'getParams') return { type: 'getParams' };
-    if (m.type === 'getCurrentTabParams') return { type: 'getCurrentTabParams' };
-    if (m.type === 'updateParams') {
-      const u = message as { tabId?: unknown; params?: unknown; host?: unknown };
-      if (typeof u.tabId !== 'number') return null;
-      if (!u.params || typeof u.params !== 'object') return null;
-      const p = u.params as { hz?: unknown; semitons?: unknown; isEnabled?: unknown; agcEnabled?: unknown };
-      if (typeof p.hz !== 'number' || typeof p.semitons !== 'number' || typeof p.isEnabled !== 'boolean') {
+    private updateTabParams( tabId: number, patch: Partial<RawAudioParams> ): void {
+    /*
+     * Here, tabParams should already exist. If not (background wake-up),
+     * we initialize without host (it will be applied on next getParams).
+     */
+        let params = this.tabParams.get( tabId );
+        if ( !params ) {
+            params = { ...DEFAULT_PARAMS };
+            this.tabParams.set( tabId, params );
+        }
+        Object.assign( params, patch );
+
+        // Notify the tab's content script (if present)
+        const msg: ParamsUpdateMessage = {
+            "type":   "paramsUpdate",
+            "params": {
+                "pitch":      calculatePitchSemitones( params.semitons, params.hz ),
+                "isEnabled":  params.isEnabled,
+                "agcEnabled": params.agcEnabled,
+            },
+        };
+
+        // If content script is not yet injected, sendMessage fails: we ignore.
+        browser.tabs.sendMessage( tabId, msg ).catch( () => undefined );
+    }
+
+    /*
+     * ------------------------------------------------------------
+     * Messages
+     * ------------------------------------------------------------
+     */
+
+    private installMessageListener(): void {
+        browser.runtime.onMessage.addListener( ( message: unknown, sender: MessageSenderLike ) => {
+            const msg = this.asIncomingMessage( message );
+            if ( !msg ) {
+                return;
+            }
+
+            if ( msg.type === "getParams" ) {
+                const tabId = sender.tab?.id;
+                if ( typeof tabId === "number" ) {
+                    const host = tryParseHostname( sender.url );
+                    if ( host ) {
+                        this.tabHost.set( tabId, host );
+                    }
+
+                    return this.getOrInitTabParams( tabId, host ?? this.tabHost.get( tabId ) ?? null );
+                }
+
+                return Promise.resolve( DEFAULT_PARAMS );
+            }
+
+            if ( msg.type === "updateParams" ) {
+                if ( typeof msg.tabId === "number" ) {
+                    const host = typeof msg.host === "string" && msg.host.length > 0 ? msg.host : this.tabHost.get( msg.tabId ) ?? null;
+                    if ( host ) {
+                        this.tabHost.set( msg.tabId, host );
+
+                        // Store all parameters (isEnabled, semitones, hz) per hostname
+                        void this.setStoredParamsForHost( host, msg.params );
+                    }
+                    this.updateTabParams( msg.tabId, msg.params );
+
+                    return Promise.resolve( { "success": true as const } );
+                }
+
+                return Promise.resolve( {
+                    "success": false as const,
+                    "error":   "No tab ID",
+                } );
+            }
+
+            if ( msg.type === "getCurrentTabParams" ) {
+                return browser.tabs.
+                    query( {
+                        "active":        true,
+                        "currentWindow": true,
+                    } ).
+                    then( async( tabs ) => {
+                        const tabId = tabs[0]?.id;
+                        if ( typeof tabId !== "number" ) {
+                            return DEFAULT_PARAMS;
+                        }
+
+                        // If URL is accessible (activeTab), we retrieve the hostname.
+                        const host = tryParseHostname( ( tabs[0] as unknown as { "url"?: string } )?.url );
+                        if ( host ) {
+                            this.tabHost.set( tabId, host );
+                        }
+
+                        return await this.getOrInitTabParams( tabId, host ?? this.tabHost.get( tabId ) ?? null );
+                    } );
+            }
+        } );
+    }
+
+    private asIncomingMessage( message: unknown ): IncomingMessage | null {
+        if ( !message || typeof message !== "object" ) {
+            return null;
+        }
+        const m = message as { "type"?: unknown };
+        if ( m.type === "getParams" ) {
+            return { "type": "getParams" };
+        }
+        if ( m.type === "getCurrentTabParams" ) {
+            return { "type": "getCurrentTabParams" };
+        }
+        if ( m.type === "updateParams" ) {
+            const u = message as {
+                "tabId"?:  unknown;
+                "params"?: unknown;
+                "host"?:   unknown;
+            };
+            if ( typeof u.tabId !== "number" ) {
+                return null;
+            }
+            if ( !u.params || typeof u.params !== "object" ) {
+                return null;
+            }
+            const p = u.params as {
+                "hz"?:         unknown;
+                "semitons"?:   unknown;
+                "isEnabled"?:  unknown;
+                "agcEnabled"?: unknown;
+            };
+            if ( typeof p.hz !== "number" || typeof p.semitons !== "number" || typeof p.isEnabled !== "boolean" ) {
+                return null;
+            }
+
+            return {
+                "type":   "updateParams",
+                "tabId":  u.tabId,
+                "host":   typeof u.host === "string" || u.host === null ?  u.host : undefined,
+                "params": {
+                    "hz":         p.hz,
+                    "semitons":   p.semitons,
+                    "isEnabled":  p.isEnabled,
+                    "agcEnabled": typeof p.agcEnabled === "boolean" ? p.agcEnabled : false,
+                },
+            };
+        }
+
         return null;
-      }
-      return {
-        type: 'updateParams',
-        tabId: u.tabId,
-        host: typeof u.host === 'string' || u.host === null ? (u.host as string | null) : undefined,
-        params: {
-          hz: p.hz,
-          semitons: p.semitons,
-          isEnabled: p.isEnabled,
-          agcEnabled: typeof p.agcEnabled === 'boolean' ? p.agcEnabled : false,
-        },
-      };
     }
-    return null;
-  }
 
-  // ------------------------------------------------------------
-  // Cleanup (prevents memory leaks)
-  // ------------------------------------------------------------
+    /*
+     * ------------------------------------------------------------
+     * Cleanup (prevents memory leaks)
+     * ------------------------------------------------------------
+     */
 
-  private installTabCleanup(): void {
-    browser.tabs.onRemoved.addListener((tabId: number) => {
-      this.tabParams.delete(tabId);
-      this.tabHost.delete(tabId);
-    });
-  }
+    private installTabCleanup(): void {
+        browser.tabs.onRemoved.addListener( ( tabId: number ) => {
+            this.tabParams.delete( tabId );
+            this.tabHost.delete( tabId );
+        } );
+    }
+
 }
 
 // Bootstrap

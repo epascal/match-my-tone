@@ -10,7 +10,12 @@
     "clean": "rm -rf dist wasm/target",
     "package": "node package.mjs",
     "release": "./release.sh",
-    "release:node": "node release.mjs"
+    "release:node": "node release.mjs",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "lint:rust": "cd wasm && cargo clippy --target wasm32-unknown-unknown -- -W clippy::all",
+    "lint:all": "npm run lint && npm run lint:rust",
+    "test": "node test-wasm.mjs"
   },
   "keywords": [
     "firefox",
@@ -28,8 +33,6 @@
     "archiver": "^7.0.1",
     "esbuild": "^0.19.12",
     "eslint": "^10.0.1",
-    "eslint-plugin-react": "^7.37.5",
-    "eslint-plugin-react-hooks": "^7.0.1",
     "globals": "^17.3.0",
     "typescript": "^5.3.3",
     "typescript-eslint": "^8.56.0"

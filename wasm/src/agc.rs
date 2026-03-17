@@ -2,19 +2,24 @@
 ///
 /// Tracks the signal envelope with asymmetric attack/release and applies
 /// a smoothed gain to bring the output toward a target peak level.
-/// A per-sample limiter guarantees output never exceeds ±1.0.
+/// Gain reduction is near-instantaneous (5 ms) while gain increase is
+/// gradual (200 ms), preventing pumping artifacts on transients.
+/// A per-sample limiter guarantees output never exceeds ±0.98.
 /// Does not affect pitch.
 pub struct Agc {
     enabled: bool,
     env_level: f32,
     current_gain: f32,
     target_level: f32,
-    attack_coeff: f32,
-    release_coeff: f32,
-    gain_smooth_coeff: f32,
+    env_attack: f32,
+    env_release: f32,
+    gain_attack: f32,
+    gain_release: f32,
     max_gain: f32,
     min_gain: f32,
 }
+
+const CEILING: f32 = 0.98;
 
 impl Agc {
     pub fn new(sample_rate: f32) -> Self {
@@ -23,10 +28,11 @@ impl Agc {
             env_level: 0.0,
             current_gain: 1.0,
             target_level: 0.7,
-            attack_coeff: 1.0 - (-1.0 / (sample_rate * 0.005)).exp(),
-            release_coeff: 1.0 - (-1.0 / (sample_rate * 0.300)).exp(),
-            gain_smooth_coeff: 1.0 - (-1.0 / (sample_rate * 0.050)).exp(),
-            max_gain: 4.0,
+            env_attack: 1.0 - (-1.0 / (sample_rate * 0.003)).exp(),
+            env_release: 1.0 - (-1.0 / (sample_rate * 0.300)).exp(),
+            gain_attack: 1.0 - (-1.0 / (sample_rate * 0.005)).exp(),
+            gain_release: 1.0 - (-1.0 / (sample_rate * 0.200)).exp(),
+            max_gain: 2.0,
             min_gain: 0.25,
         }
     }
@@ -56,12 +62,12 @@ impl Agc {
             let r = buf[i * 2 + 1];
             let peak = l.abs().max(r.abs());
 
-            let coeff = if peak > self.env_level {
-                self.attack_coeff
+            let env_coeff = if peak > self.env_level {
+                self.env_attack
             } else {
-                self.release_coeff
+                self.env_release
             };
-            self.env_level += coeff * (peak - self.env_level);
+            self.env_level += env_coeff * (peak - self.env_level);
 
             let desired_gain = if self.env_level > 1e-6 {
                 (self.target_level / self.env_level).clamp(self.min_gain, self.max_gain)
@@ -69,11 +75,15 @@ impl Agc {
                 1.0
             };
 
-            self.current_gain += self.gain_smooth_coeff * (desired_gain - self.current_gain);
+            let gain_coeff = if desired_gain < self.current_gain {
+                self.gain_attack
+            } else {
+                self.gain_release
+            };
+            self.current_gain += gain_coeff * (desired_gain - self.current_gain);
 
-            // Per-sample limiter: cap gain so output never exceeds ±1.0
             let safe_gain = if peak > 1e-6 {
-                self.current_gain.min(1.0 / peak)
+                self.current_gain.min(CEILING / peak)
             } else {
                 self.current_gain
             };

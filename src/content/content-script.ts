@@ -33,29 +33,68 @@ class PitchShifterContentScript {
 
     private wasmBytes: ArrayBuffer | null = null;
 
+    private wasmBytesPromise: Promise<ArrayBuffer | null> | null = null;
+
+    private initialized = false;
+
+    private domObserver: MutationObserver | null = null;
+
     private readonly processed = new WeakMap<HTMLMediaElement, ProcessedElementData>();
 
     async start(): Promise<void> {
         console.log( "Match My Tone: content script loaded." );
         this.installMessageListener();
         await this.loadInitialParams();
-        this.fetchWasmBinary();
-        await this.initAudioContext();
-        this.setupInitialMedia();
-        this.observeDom();
+
+        // If loaded while disabled, do not touch the page (no deps, no listeners).
+        if ( this.params?.isEnabled ) {
+            await this.ensureInitialized();
+        }
     }
 
-    private fetchWasmBinary(): void {
+    private fetchWasmBinary(): Promise<ArrayBuffer | null> {
+        if ( this.wasmBytesPromise ) {
+            return this.wasmBytesPromise;
+        }
+
         const url = browser.runtime.getURL( WASM_PATH );
-        fetch( url ).
+        this.wasmBytesPromise = fetch( url ).
             then( ( r ) => r.arrayBuffer() ).
             then( ( buf ) => {
                 this.wasmBytes = buf;
                 console.log( `Match My Tone: WASM binary loaded (${ buf.byteLength } bytes).` );
+
+                return buf;
             } ).
             catch( ( err ) => {
                 console.warn( "Match My Tone: WASM binary not available.", err );
+
+                return null;
             } );
+
+        return this.wasmBytesPromise;
+    }
+
+    private async getWasmBytes(): Promise<ArrayBuffer | null> {
+        if ( this.wasmBytes ) {
+            return this.wasmBytes;
+        }
+
+        return await this.fetchWasmBinary();
+    }
+
+    private async ensureInitialized(): Promise<void> {
+        if ( this.initialized ) {
+            return;
+        }
+        this.initialized = true;
+
+        // Load dependencies only when enabled.
+        void this.fetchWasmBinary();
+
+        await this.initAudioContext();
+        this.setupInitialMedia();
+        this.observeDom();
     }
 
     /*
@@ -205,10 +244,11 @@ class PitchShifterContentScript {
                 effectGain.gain.setValueAtTime( 0.0, now );
             }
 
-            if ( this.wasmBytes ) {
+            const wasm = await this.getWasmBytes();
+            if ( wasm ) {
                 workletNode.port.postMessage( {
                     "type": "load-wasm",
-                    "wasm": this.wasmBytes,
+                    "wasm": wasm,
                 } );
             }
 
@@ -224,9 +264,14 @@ class PitchShifterContentScript {
         }
     }
 
-    private updateAllElements( params: GlobalAudioParams ): void {
+    private async updateAllElements( params: GlobalAudioParams ): Promise<void> {
         const oldParams = this.params;
         this.params = params;
+
+        // Lazy init: attach/load dependencies only on activation.
+        if ( params.isEnabled && !this.initialized ) {
+            await this.ensureInitialized();
+        }
 
         if ( !this.audioContext ) {
             return;
@@ -294,7 +339,11 @@ class PitchShifterContentScript {
     }
 
     private observeDom(): void {
-        const observer = new MutationObserver( ( mutations ) => {
+        if ( this.domObserver ) {
+            return;
+        }
+
+        this.domObserver = new MutationObserver( ( mutations ) => {
             for ( const mutation of mutations ) {
                 for ( const node of mutation.addedNodes ) {
                     if ( node.nodeType !== Node.ELEMENT_NODE ) {
@@ -309,7 +358,7 @@ class PitchShifterContentScript {
             }
         } );
 
-        observer.observe( document.body ?? document.documentElement, {
+        this.domObserver.observe( document.body ?? document.documentElement, {
             "childList": true,
             "subtree":   true,
         } );

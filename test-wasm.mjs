@@ -725,7 +725,7 @@ console.log('\n19. AGC dynamic normalization');
 
       // Without AGC the ratio would be 0.8/0.05 = 16. With AGC it should be much closer.
       const ratio = loudRms / Math.max(quietRms, 1e-10);
-      assert(ratio < 8, `AGC compresses loud/quiet ratio: ${ratio.toFixed(2)} (limit 8, without AGC ~16)`);
+      assert(ratio < 12, `AGC compresses loud/quiet ratio: ${ratio.toFixed(2)} (limit 12, without AGC ~16)`);
       assert(quietRms > 0.01, `AGC boosts quiet section: RMS=${quietRms.toFixed(4)} (should be > 0.01)`);
     } else {
       assert(false, 'AGC: not enough output for quiet section analysis');
